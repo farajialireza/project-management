@@ -19,6 +19,9 @@ export interface ProductBacklog {
   title: string;
   description: string;
   createdAt: number;
+  displayId?: string;
+  role?: string;
+  priority?: 'Low' | 'Medium' | 'High';
 }
 
 export interface UserStory {
@@ -28,6 +31,8 @@ export interface UserStory {
   description: string;
   priority: 'Low' | 'Medium' | 'High';
   points: number;
+  role?: string;
+  displayId?: string;
 }
 
 export interface Milestone {

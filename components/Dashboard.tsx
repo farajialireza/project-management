@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 import { useAuth } from '../App';
 import { auth } from '../firebase';
 import { Button } from './ui';
-import { LogOut, Layout, Book, Milestone, CheckSquare, Users, Settings } from 'lucide-react';
+import { LogOut, Layout, Book, Milestone, CheckSquare, Users, Settings, Bot } from 'lucide-react';
 import { BacklogsView, StoriesView, MilestonesView, TasksView } from './features/ProjectViews';
 import { TeamsView, UsersView } from './features/AdminViews';
+import { AiAssistantView } from './features/AiAssistantView';
 
 const TABS = [
   { id: 'backlogs', label: 'Backlogs', icon: Book, component: BacklogsView },
@@ -13,6 +14,7 @@ const TABS = [
   { id: 'tasks', label: 'Tasks', icon: CheckSquare, component: TasksView },
   { id: 'teams', label: 'Teams', icon: Users, component: TeamsView, adminOnly: true },
   { id: 'users', label: 'Users', icon: Settings, component: UsersView, adminOnly: true },
+  { id: 'ai-assistant', label: 'AI Assistant', icon: Bot, component: AiAssistantView },
 ];
 
 export const Dashboard = () => {
@@ -55,7 +57,7 @@ export const Dashboard = () => {
         </div>
 
         {/* Desktop Tabs */}
-        <div className="hidden md:flex space-x-1 rounded-lg bg-muted p-1 mb-8 w-fit">
+        <div className="hidden md:flex space-x-1 rounded-lg bg-muted p-1 mb-8 w-fit overflow-x-auto max-w-full">
           {TABS.filter(t => !t.adminOnly || user?.isAdmin).map(tab => (
             <button
               key={tab.id}
