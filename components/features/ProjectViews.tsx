@@ -4,7 +4,7 @@ import { db } from '../../firebase';
 import { collection, addDoc, getDocs, doc, deleteDoc, updateDoc, query, where, writeBatch } from 'firebase/firestore';
 import { Button, Table, TableHeader, TableRow, TableHead, TableBody, TableCell, Dialog, DialogHeader, DialogTitle, Input, Label, DialogFooter, Badge, Card, CardHeader, CardTitle, CardContent } from '../ui';
 import { ProductBacklog, UserStory, Milestone, Task, Team, User } from '../../types';
-import { Plus, Trash2, Edit2, CheckCircle, Clock } from 'lucide-react';
+import { Plus, Trash2, Edit2, CheckCircle, Clock, ChevronDown, ChevronRight, ListTodo } from 'lucide-react';
 import { useAuth } from '../../App';
 
 // --- Backlogs View ---
@@ -170,123 +170,197 @@ export const BacklogsView = () => {
   );
 };
 
-// --- Stories View ---
+// --- Stories View (Hierarchical) ---
 export const StoriesView = () => {
   const { user } = useAuth();
   const [stories, setStories] = useState<(UserStory & { backlogTitle?: string })[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [backlogs, setBacklogs] = useState<ProductBacklog[]>([]);
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const { register, handleSubmit, reset } = useForm<UserStory>();
+  const [expandedStoryId, setExpandedStoryId] = useState<string | null>(null);
+  
+  // Dialog States
+  const [isStoryDialogOpen, setIsStoryDialogOpen] = useState(false);
+  const [isTaskDialogOpen, setIsTaskDialogOpen] = useState(false);
+  const [targetStory, setTargetStory] = useState<UserStory | null>(null);
+  
+  const { register: regStory, handleSubmit: subStory, reset: resetStory } = useForm<UserStory>();
+  const { register: regTask, handleSubmit: subTask, reset: resetTask } = useForm<Task>();
 
   const fetchData = async () => {
+    // 1. Fetch Backlogs
     const blSnap = await getDocs(collection(db, "product_backlogs"));
     const bls = blSnap.docs.map(d => ({ id: d.id, ...d.data() } as ProductBacklog));
     setBacklogs(bls);
 
+    // 2. Fetch Stories
     let allStories: (UserStory & { backlogTitle?: string })[] = [];
     for (const bl of bls) {
       const storySnap = await getDocs(collection(db, `product_backlogs/${bl.id}/user_stories`));
       const s = storySnap.docs.map(d => ({ id: d.id, backlogTitle: bl.title, ...d.data() } as UserStory & { backlogTitle: string }));
       allStories = [...allStories, ...s];
     }
-    // Sort by displayId if available, else by title
     allStories.sort((a, b) => (a.displayId || "").localeCompare(b.displayId || "") || a.title.localeCompare(b.title));
     setStories(allStories);
+
+    // 3. Fetch Tasks
+    const tasksSnap = await getDocs(collection(db, "tasks"));
+    setTasks(tasksSnap.docs.map(d => ({ id: d.id, ...d.data() } as Task)));
   };
 
   useEffect(() => { fetchData(); }, []);
 
-  const onSubmit = async (data: any) => {
+  const onAddStory = async (data: any) => {
     const { backlogId, ...rest } = data;
     await addDoc(collection(db, `product_backlogs/${backlogId}/user_stories`), rest);
-    setIsDialogOpen(false);
-    reset();
+    setIsStoryDialogOpen(false);
+    resetStory();
     fetchData();
+  };
+
+  const onAddTask = async (data: any) => {
+    if (!targetStory) return;
+    await addDoc(collection(db, "tasks"), { 
+      ...data, 
+      userStoryId: targetStory.id,
+      backlogId: targetStory.backlogId,
+      status: 'To Do',
+      createdAt: Date.now() 
+    });
+    setIsTaskDialogOpen(false);
+    resetTask();
+    fetchData();
+    // Auto expand the story we just added a task to
+    setExpandedStoryId(targetStory.id);
+  };
+
+  const openAddTask = (story: UserStory, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setTargetStory(story);
+    setIsTaskDialogOpen(true);
+  };
+
+  const toggleExpand = (id: string) => {
+    setExpandedStoryId(expandedStoryId === id ? null : id);
   };
 
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold tracking-tight">User Stories</h2>
-        {user?.isAdmin && <Button onClick={() => setIsDialogOpen(true)}><Plus className="mr-2 h-4 w-4" /> Add Story</Button>}
+        <h2 className="text-2xl font-bold tracking-tight">User Stories & Tasks</h2>
+        {user?.isAdmin && <Button onClick={() => setIsStoryDialogOpen(true)}><Plus className="mr-2 h-4 w-4" /> Add Story</Button>}
       </div>
       <Card>
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-[40px]"></TableHead>
               <TableHead className="w-[100px]">ID</TableHead>
               <TableHead>Title</TableHead>
-              <TableHead>Role</TableHead>
               <TableHead>Backlog</TableHead>
               <TableHead>Priority</TableHead>
-              <TableHead>Points</TableHead>
+              <TableHead>Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {stories.map(story => (
-              <TableRow key={story.id}>
-                 <TableCell className="font-mono text-xs">{story.displayId || '-'}</TableCell>
-                <TableCell className="font-medium">
-                    {story.title}
-                    <div className="text-xs text-muted-foreground truncate max-w-[300px]">{story.description}</div>
-                </TableCell>
-                <TableCell>{story.role || '-'}</TableCell>
-                <TableCell>{story.backlogTitle}</TableCell>
-                <TableCell>
-                  <Badge variant={story.priority === 'High' ? 'destructive' : story.priority === 'Medium' ? 'default' : 'secondary'}>
-                    {story.priority}
-                  </Badge>
-                </TableCell>
-                <TableCell>{story.points}</TableCell>
-              </TableRow>
-            ))}
+            {stories.map(story => {
+              const storyTasks = tasks.filter(t => t.userStoryId === story.id);
+              const isExpanded = expandedStoryId === story.id;
+              
+              return (
+                <React.Fragment key={story.id}>
+                  <TableRow className={isExpanded ? "bg-muted/50 border-b-0" : "cursor-pointer"} onClick={() => toggleExpand(story.id)}>
+                    <TableCell>
+                      {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">{story.displayId || '-'}</TableCell>
+                    <TableCell className="font-medium">
+                        {story.title}
+                        <div className="text-xs text-muted-foreground truncate max-w-[300px]">{story.description}</div>
+                    </TableCell>
+                    <TableCell>{story.backlogTitle}</TableCell>
+                    <TableCell>
+                      <Badge variant={story.priority === 'High' ? 'destructive' : story.priority === 'Medium' ? 'default' : 'secondary'}>
+                        {story.priority}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                       <Button variant="outline" size="sm" onClick={(e) => openAddTask(story, e)}>
+                         <ListTodo className="h-3 w-3 mr-2" /> Add Task
+                       </Button>
+                    </TableCell>
+                  </TableRow>
+                  {isExpanded && (
+                    <TableRow className="bg-muted/30 hover:bg-muted/30">
+                      <TableCell colSpan={6} className="p-0">
+                        <div className="p-4 pl-12 space-y-2">
+                           <h4 className="text-sm font-semibold text-muted-foreground flex items-center gap-2">
+                             <ListTodo className="h-4 w-4" /> Tasks ({storyTasks.length})
+                           </h4>
+                           {storyTasks.length === 0 ? (
+                             <p className="text-xs text-muted-foreground italic">No tasks yet.</p>
+                           ) : (
+                             <div className="grid gap-2">
+                               {storyTasks.map(task => (
+                                 <div key={task.id} className="flex items-center justify-between bg-background p-2 rounded border text-sm">
+                                   <div className="flex items-center gap-2">
+                                      <div className={`w-2 h-2 rounded-full ${task.status === 'Done' ? 'bg-green-500' : task.status === 'In Progress' ? 'bg-blue-500' : 'bg-gray-300'}`} />
+                                      <span>{task.title}</span>
+                                   </div>
+                                   <Badge variant="outline" className="text-[10px]">{task.status}</Badge>
+                                 </div>
+                               ))}
+                             </div>
+                           )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </React.Fragment>
+              );
+            })}
           </TableBody>
         </Table>
       </Card>
 
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+      {/* Story Modal */}
+      <Dialog open={isStoryDialogOpen} onOpenChange={setIsStoryDialogOpen}>
         <DialogHeader><DialogTitle>Add User Story</DialogTitle></DialogHeader>
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 py-4">
+        <form onSubmit={subStory(onAddStory)} className="space-y-4 py-4">
           <div className="space-y-2">
             <Label>Backlog (Parent)</Label>
-            <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...register('backlogId', { required: true })}>
+            <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...regStory('backlogId', { required: true })}>
               <option value="">Select Backlog</option>
               {backlogs.map(b => <option key={b.id} value={b.id}>{b.title}</option>)}
             </select>
           </div>
           <div className="grid grid-cols-2 gap-4">
-             <div className="space-y-2">
-                <Label>ID (Optional)</Label>
-                <Input {...register('displayId')} placeholder="e.g. PB-001" />
-            </div>
-            <div className="space-y-2">
-                <Label>Role (Optional)</Label>
-                <Input {...register('role')} placeholder="e.g. Admin" />
-            </div>
+             <div className="space-y-2"><Label>ID</Label><Input {...regStory('displayId')} placeholder="PB-001" /></div>
+             <div className="space-y-2"><Label>Role</Label><Input {...regStory('role')} /></div>
           </div>
-          <div className="space-y-2">
-            <Label>Title</Label>
-            <Input {...register('title', { required: true })} placeholder="e.g. Manage Employees" />
-          </div>
-          <div className="space-y-2">
-            <Label>Description</Label>
-            <Input {...register('description')} placeholder="As an admin, I want to..." />
-          </div>
+          <div className="space-y-2"><Label>Title</Label><Input {...regStory('title', { required: true })} /></div>
+          <div className="space-y-2"><Label>Description</Label><Input {...regStory('description')} /></div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Priority</Label>
-              <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...register('priority')}>
+              <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...regStory('priority')}>
                 <option value="Low">Low</option>
                 <option value="Medium">Medium</option>
                 <option value="High">High</option>
               </select>
             </div>
-            <div className="space-y-2">
-              <Label>Points</Label>
-              <Input type="number" {...register('points')} defaultValue={1} />
-            </div>
+            <div className="space-y-2"><Label>Points</Label><Input type="number" {...regStory('points')} defaultValue={1} /></div>
           </div>
-          <DialogFooter><Button type="submit">Create</Button></DialogFooter>
+          <DialogFooter><Button type="submit">Create Story</Button></DialogFooter>
+        </form>
+      </Dialog>
+
+      {/* Task Modal (Attached to Story) */}
+      <Dialog open={isTaskDialogOpen} onOpenChange={setIsTaskDialogOpen}>
+        <DialogHeader><DialogTitle>Add Task to: {targetStory?.title}</DialogTitle></DialogHeader>
+        <form onSubmit={subTask(onAddTask)} className="space-y-4 py-4">
+          <div className="space-y-2"><Label>Task Title</Label><Input {...regTask('title', { required: true })} /></div>
+          <div className="space-y-2"><Label>Description</Label><Input {...regTask('description')} /></div>
+          <DialogFooter><Button type="submit">Create Task</Button></DialogFooter>
         </form>
       </Dialog>
     </div>
@@ -403,47 +477,57 @@ export const TasksView = () => {
   const { user } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
-  const [users, setUsers] = useState<User[]>([]); // For assignee
+  const [users, setUsers] = useState<User[]>([]);
   const [milestones, setMilestones] = useState<Milestone[]>([]);
+  
+  // Selection State for cascading dropdowns
+  const [backlogs, setBacklogs] = useState<ProductBacklog[]>([]);
+  const [stories, setStories] = useState<UserStory[]>([]);
+  const [selectedBacklogId, setSelectedBacklogId] = useState<string>("");
+
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const { register, handleSubmit, reset, watch } = useForm<Task>();
 
   const loadData = useCallback(async () => {
     if (!user) return;
 
-    // Fetch teams user belongs to
-    const teamsSnap = await getDocs(collection(db, "teams"));
-    const allTeams = teamsSnap.docs.map(d => ({ id: d.id, ...d.data() } as Team));
-    const userTeams = user.isAdmin ? allTeams : allTeams.filter(t => t.memberIds.includes(user.id));
-    setTeams(userTeams);
+    // Load Tasks
+    const tasksSnap = await getDocs(collection(db, "tasks"));
+    setTasks(tasksSnap.docs.map(d => ({ id: d.id, ...d.data() } as Task)));
 
-    const userTeamsIds = userTeams.map(t => t.id);
-    if (userTeamsIds.length === 0) { setTasks([]); return; }
+    // Load Dropdown Data
+    const tSnap = await getDocs(collection(db, "teams"));
+    setTeams(tSnap.docs.map(d => ({ id: d.id, ...d.data() } as Team)));
 
-    let q;
-    if (userTeamsIds.length <= 10) {
-        q = query(collection(db, "tasks"), where("teamId", "in", userTeamsIds));
-    } else {
-        q = query(collection(db, "tasks"));
-    }
-    
-    const tasksSnap = await getDocs(q);
-    const fetchedTasks = tasksSnap.docs.map(d => ({ id: d.id, ...d.data() } as Task));
-    setTasks(userTeamsIds.length <= 10 ? fetchedTasks : fetchedTasks.filter(t => userTeamsIds.includes(t.teamId)));
-
-    // Fetch Users and Milestones for dropdowns
     const uSnap = await getDocs(collection(db, "users"));
     setUsers(uSnap.docs.map(d => ({ id: d.id, ...d.data() } as User)));
+
     const mSnap = await getDocs(collection(db, "milestones"));
     setMilestones(mSnap.docs.map(d => ({ id: d.id, ...d.data() } as Milestone)));
+
+    const bSnap = await getDocs(collection(db, "product_backlogs"));
+    setBacklogs(bSnap.docs.map(d => ({ id: d.id, ...d.data() } as ProductBacklog)));
+
   }, [user]);
 
+  useEffect(() => { loadData(); }, [loadData]);
+
+  // When Backlog selection changes in the form, fetch its stories
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    if (selectedBacklogId) {
+       const fetchStories = async () => {
+          const sSnap = await getDocs(collection(db, `product_backlogs/${selectedBacklogId}/user_stories`));
+          setStories(sSnap.docs.map(d => ({ id: d.id, ...d.data() } as UserStory)));
+       };
+       fetchStories();
+    } else {
+       setStories([]);
+    }
+  }, [selectedBacklogId]);
 
   const onSubmit = async (data: any) => {
-    await addDoc(collection(db, "tasks"), { ...data, createdAt: Date.now() });
+    // data.userStoryId comes from form. We need to fetch backlogId from selectedBacklogId state for consistency
+    await addDoc(collection(db, "tasks"), { ...data, backlogId: selectedBacklogId, createdAt: Date.now() });
     setIsDialogOpen(false);
     reset();
     loadData();
@@ -456,14 +540,11 @@ export const TasksView = () => {
     return team?.memberIds.includes(u.id);
   });
 
-  // Check if user is leader of any team or admin
-  const canAdd = user?.isAdmin || teams.some(t => t.leaderId === user?.id);
-
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold tracking-tight">Tasks</h2>
-        {canAdd && <Button onClick={() => setIsDialogOpen(true)}><Plus className="mr-2 h-4 w-4" /> Add Task</Button>}
+        <Button onClick={() => setIsDialogOpen(true)}><Plus className="mr-2 h-4 w-4" /> Create Task</Button>
       </div>
       <Card>
         <Table>
@@ -482,7 +563,7 @@ export const TasksView = () => {
               return (
                 <TableRow key={t.id}>
                   <TableCell className="font-medium">{t.title}</TableCell>
-                  <TableCell>{team?.name || 'Unknown'}</TableCell>
+                  <TableCell>{team?.name || '-'}</TableCell>
                   <TableCell>
                     <Badge variant={t.status === 'Done' ? 'default' : 'secondary'}>{t.status}</Badge>
                   </TableCell>
@@ -497,15 +578,33 @@ export const TasksView = () => {
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogHeader><DialogTitle>Create Task</DialogTitle></DialogHeader>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 py-4">
-           <div className="space-y-2">
-            <Label>Team</Label>
-            <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...register('teamId', { required: true })}>
-              <option value="">Select Team</option>
-              {teams.filter(t => user?.isAdmin || t.leaderId === user?.id).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
+          
+          {/* Hierarchy Selection */}
+          <div className="grid grid-cols-2 gap-4 border-b pb-4">
+             <div className="space-y-2">
+               <Label>1. Select Backlog</Label>
+               <select 
+                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                 value={selectedBacklogId}
+                 onChange={(e) => setSelectedBacklogId(e.target.value)}
+                 required
+               >
+                 <option value="">Select Backlog</option>
+                 {backlogs.map(b => <option key={b.id} value={b.id}>{b.title}</option>)}
+               </select>
+             </div>
+             <div className="space-y-2">
+               <Label>2. Select User Story</Label>
+               <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...register('userStoryId', { required: true })} disabled={!selectedBacklogId}>
+                 <option value="">Select Story</option>
+                 {stories.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}
+               </select>
+             </div>
           </div>
+
           <div className="space-y-2"><Label>Title</Label><Input {...register('title', { required: true })} /></div>
           <div className="space-y-2"><Label>Description</Label><Input {...register('description')} /></div>
+
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Status</Label>
@@ -513,6 +612,23 @@ export const TasksView = () => {
                 <option value="To Do">To Do</option>
                 <option value="In Progress">In Progress</option>
                 <option value="Done">Done</option>
+              </select>
+            </div>
+             <div className="space-y-2">
+               <Label>Milestone</Label>
+                <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...register('milestoneId')}>
+                  <option value="">None</option>
+                  {milestones.map(m => <option key={m.id} value={m.id}>{m.title}</option>)}
+                </select>
+             </div>
+          </div>
+
+           <div className="grid grid-cols-2 gap-4">
+             <div className="space-y-2">
+              <Label>Team</Label>
+              <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...register('teamId')}>
+                <option value="">No Team</option>
+                {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
             <div className="space-y-2">
@@ -523,13 +639,7 @@ export const TasksView = () => {
               </select>
             </div>
           </div>
-           <div className="space-y-2">
-             <Label>Milestone</Label>
-              <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...register('milestoneId')}>
-                <option value="">None</option>
-                {milestones.map(m => <option key={m.id} value={m.id}>{m.title}</option>)}
-              </select>
-           </div>
+
           <DialogFooter><Button type="submit">Create Task</Button></DialogFooter>
         </form>
       </Dialog>

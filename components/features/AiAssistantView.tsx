@@ -40,6 +40,11 @@ const sanitizePriority = (p: any): 'Low' | 'Medium' | 'High' => {
      if (up === 'P1' || up.includes('P1')) return 'High';
      if (up === 'P2' || up.includes('P2')) return 'Medium';
      if (up === 'P3' || up.includes('P3') || up === 'P4') return 'Low';
+     
+     // Persian mapping
+     if (up.includes('بالا') || up.includes('HIGH')) return 'High';
+     if (up.includes('متوسط') || up.includes('MEDIUM')) return 'Medium';
+     if (up.includes('پایین') || up.includes('LOW')) return 'Low';
   }
 
   if (p && valid.includes(p)) return p as 'Low' | 'Medium' | 'High';
@@ -124,9 +129,9 @@ const BulkImportSection = () => {
           3. Description Column (e.g., "Description", "توضیح", "توضیحات", "توضیح اجمالی", "شرح") -> extract to 'description'.
           4. Role Column (e.g., "Role", "نقش", "Actor") -> extract to 'role'.
           5. Priority Column (e.g., "Priority", "اولویت") -> extract to 'priority'.
-            - Map "P1", "P1", "High" -> "High"
-            - Map "P2", "Medium" -> "Medium"
-            - Map "P3", "P4", "Low" -> "Low"`,
+            - Map "P1", "P1", "High", "بالا" -> "High"
+            - Map "P2", "Medium", "متوسط" -> "Medium"
+            - Map "P3", "P4", "Low", "پایین" -> "Low"`,
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
@@ -319,53 +324,46 @@ const BulkImportSection = () => {
 };
 
 const FeatureBreakdownSection = () => {
-  const [backlogs, setBacklogs] = useState<ProductBacklog[]>([]);
-  const [selectedBacklogId, setSelectedBacklogId] = useState("");
   const [featureDescription, setFeatureDescription] = useState("");
-  const [generatedStories, setGeneratedStories] = useState<GeneratedStory[]>([]);
+  const [generatedBacklogs, setGeneratedBacklogs] = useState<GeneratedBacklog[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    const fetch = async () => {
-      const snap = await getDocs(collection(db, "product_backlogs"));
-      setBacklogs(snap.docs.map(d => ({ id: d.id, ...d.data() } as ProductBacklog)));
-    };
-    fetch();
-  }, []);
 
   const handleGenerate = async () => {
     if (!featureDescription) return;
     setLoading(true);
-    setGeneratedStories([]);
+    setGeneratedBacklogs([]);
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      // Using gemini-flash-lite-latest for cost efficiency
       const response = await ai.models.generateContent({
         model: 'gemini-flash-lite-latest',
-        contents: `Break down the following feature description into detailed User Stories.
-        Ensure you cover all edge cases and functional requirements implied by the description.
-        
-        Feature Description:
-        ${featureDescription}`,
+        contents: `Workflow/Feature Description (Input):
+        ${featureDescription}
+
+        Your Task:
+        1. Analyze the description above.
+        2. Identify distinct features or requirements.
+        3. Create one or more "Product Backlog" items based on your judgment.
+        4. **IMPORTANT**: The output Title, Description, and Role MUST be in **PERSIAN (FARSI)**.
+        5. Assign a displayId, Priority (Low/Medium/High), and Role.
+        `,
         config: {
-          systemInstruction: "Act as an Agile Product Owner.",
+          systemInstruction: "You are an expert Agile Product Owner fluent in Persian (Farsi). Create Product Backlogs from the user's description. Return JSON.",
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
             properties: {
-              stories: {
+              backlogs: {
                 type: Type.ARRAY,
                 items: {
                   type: Type.OBJECT,
                   properties: {
+                    displayId: { type: Type.STRING },
                     title: { type: Type.STRING },
                     description: { type: Type.STRING },
-                    priority: { type: Type.STRING },
-                    points: { type: Type.NUMBER },
                     role: { type: Type.STRING },
-                    displayId: { type: Type.STRING }
+                    priority: { type: Type.STRING },
                   }
                 }
               }
@@ -376,48 +374,44 @@ const FeatureBreakdownSection = () => {
 
       if (response.text) {
         const data = JSON.parse(response.text);
-        setGeneratedStories(data.stories);
+        if (data.backlogs) {
+            setGeneratedBacklogs(data.backlogs);
+        }
       }
     } catch (e) {
       console.error(e);
-      alert("Failed to generate stories. The feature description might be too complex for a single pass.");
+      alert("Failed to generate backlogs. Please try again.");
     } finally {
       setLoading(false);
     }
   };
 
   const handleSave = async () => {
-    if (!selectedBacklogId) {
-      alert("Please select a target backlog.");
-      return;
-    }
+    if (generatedBacklogs.length === 0) return;
     setSaving(true);
     try {
-      // Use batch for better performance on multiple stories
       const batch = writeBatch(db);
-      const collectionRef = collection(db, `product_backlogs/${selectedBacklogId}/user_stories`);
       
-      generatedStories.forEach(story => {
-        const newDocRef = doc(collectionRef);
+      generatedBacklogs.forEach(bl => {
+        const newDocRef = doc(collection(db, "product_backlogs"));
         batch.set(newDocRef, {
-          backlogId: selectedBacklogId,
-          title: sanitizeString(story.title) || "Untitled Story",
-          description: sanitizeString(story.description),
-          priority: sanitizePriority(story.priority),
-          points: sanitizeNumber(story.points),
-          role: sanitizeString(story.role),
-          displayId: sanitizeString(story.displayId)
+          title: sanitizeString(bl.title) || "Untitled Backlog",
+          description: sanitizeString(bl.description),
+          priority: sanitizePriority(bl.priority),
+          role: sanitizeString(bl.role),
+          displayId: sanitizeString(bl.displayId),
+          createdAt: Date.now()
         });
       });
 
       await batch.commit();
 
-      alert("Stories added successfully!");
-      setGeneratedStories([]);
+      alert("Backlogs created successfully!");
+      setGeneratedBacklogs([]);
       setFeatureDescription("");
     } catch (e) {
       console.error(e);
-      alert("Error saving stories.");
+      alert("Error saving backlogs.");
     } finally {
       setSaving(false);
     }
@@ -426,58 +420,53 @@ const FeatureBreakdownSection = () => {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
       <Card>
-        <CardHeader><CardTitle>Describe Feature</CardTitle></CardHeader>
+        <CardHeader><CardTitle>Feature Description</CardTitle></CardHeader>
         <CardContent className="space-y-4">
-           <div className="space-y-2">
-            <Label>Target Backlog</Label>
-            <select 
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-              value={selectedBacklogId}
-              onChange={(e) => setSelectedBacklogId(e.target.value)}
-            >
-              <option value="">Select a Backlog...</option>
-              {backlogs.map(b => <option key={b.id} value={b.id}>{b.title}</option>)}
-            </select>
-          </div>
           <div className="space-y-2">
-            <Label>Feature Description</Label>
+            <Label>Description (Farsi)</Label>
             <Textarea 
-              className="min-h-[200px]" 
-              placeholder="E.g. I want to add a real-time chat feature where team members can communicate within a task context..." 
+              className="min-h-[200px] text-right" 
+              dir="rtl"
+              placeholder="Describe your project requirements or features in Farsi..." 
               value={featureDescription}
               onChange={(e) => setFeatureDescription(e.target.value)}
             />
           </div>
           <Button onClick={handleGenerate} disabled={loading || !featureDescription} className="w-full">
-             {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Thinking...</> : "Generate User Stories"}
+             {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analyzing & Generating...</> : "Generate Backlogs"}
           </Button>
         </CardContent>
       </Card>
 
       <Card>
-        <CardHeader><CardTitle>Suggested Stories</CardTitle></CardHeader>
+        <CardHeader><CardTitle>Suggested Backlogs</CardTitle></CardHeader>
         <CardContent>
-           {generatedStories.length === 0 ? (
+           {generatedBacklogs.length === 0 ? (
              <div className="flex flex-col items-center justify-center h-[200px] text-muted-foreground border-2 border-dashed rounded-lg">
               <Sparkles className="h-10 w-10 mb-2 opacity-50" />
-              <p>AI suggestions will appear here</p>
+              <p>Generated backlogs will appear here</p>
             </div>
            ) : (
              <div className="space-y-4">
                <div className="max-h-[400px] overflow-y-auto space-y-2 pr-2">
-                 {generatedStories.map((story, i) => (
+                 {generatedBacklogs.map((bl, i) => (
                     <div key={i} className="border rounded p-3 bg-white shadow-sm">
                       <div className="flex justify-between items-start mb-1">
-                        <span className="font-semibold text-sm">{sanitizeString(story.title)}</span>
-                        <Badge variant={sanitizePriority(story.priority) === 'High' ? 'destructive' : 'secondary'}>{sanitizePriority(story.priority)}</Badge>
+                         <div className="flex items-center gap-2 w-full justify-end">
+                            <span className="font-semibold text-sm text-right" dir="rtl">{sanitizeString(bl.title)}</span>
+                             {bl.displayId && <span className="font-mono text-xs bg-gray-100 px-1 rounded text-gray-600">{sanitizeString(bl.displayId)}</span>}
+                         </div>
                       </div>
-                      <p className="text-xs text-muted-foreground">{sanitizeString(story.description)}</p>
-                      <div className="mt-2 text-xs font-medium text-gray-500">Est. Points: {sanitizeNumber(story.points)}</div>
+                      <div className="flex justify-end gap-2 my-1">
+                          <Badge variant="outline" className="whitespace-nowrap">{sanitizePriority(bl.priority)}</Badge>
+                          {bl.role && <Badge variant="secondary" className="whitespace-nowrap">{sanitizeString(bl.role)}</Badge>}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1 text-right" dir="rtl">{sanitizeString(bl.description)}</p>
                     </div>
                  ))}
                </div>
                <Button onClick={handleSave} disabled={saving} className="w-full">
-                 {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : "Add All Stories to Backlog"}
+                 {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : "Confirm & Create Backlogs"}
                </Button>
              </div>
            )}

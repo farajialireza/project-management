@@ -52,6 +52,7 @@ export interface Task {
   teamId: string;
   assigneeId?: string;
   milestoneId?: string;
-  userStoryId?: string;
+  userStoryId: string; // Made mandatory to enforce hierarchy
+  backlogId: string;   // Added for easier querying
   createdAt: number;
 }
