@@ -1136,7 +1136,16 @@ export const TasksView = () => {
     const [usersList, setUsersList] = useState<User[]>([]);
     const [selectedTask, setSelectedTask] = useState<Task | null>(null);
     const [isDetailOpen, setIsDetailOpen] = useState(false);
+    
+    // Filters
     const [filterSelf, setFilterSelf] = useState(false);
+    const [filterStack, setFilterStack] = useState<string>('All');
+    const [filterPanel, setFilterPanel] = useState<string>('All');
+    const [filterTeam, setFilterTeam] = useState<string>('All');
+    const [filterAssignee, setFilterAssignee] = useState<string>('All');
+    
+    // Drag & Drop State
+    const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
 
     const fetchData = async () => {
         const [tSnap, tmSnap, uSnap] = await Promise.all([
@@ -1153,25 +1162,166 @@ export const TasksView = () => {
 
     const COLUMNS: Task['status'][] = ['To Do', 'In Progress', 'Testing', 'Review', 'Done'];
 
-    const filteredTasks = filterSelf && user ? tasks.filter(t => t.assigneeId === user.id) : tasks;
+    // --- Drag Handlers ---
+    const handleDragStart = (e: React.DragEvent, taskId: string) => {
+        setDraggedTaskId(taskId);
+        e.dataTransfer.effectAllowed = 'move';
+        // Optional: Set a custom drag image
+    };
+
+    const handleDragOver = (e: React.DragEvent) => {
+        e.preventDefault(); // Necessary to allow dropping
+        e.dataTransfer.dropEffect = 'move';
+    };
+
+    const handleDrop = async (e: React.DragEvent, newStatus: Task['status']) => {
+        e.preventDefault();
+        if (!draggedTaskId || !user) return;
+
+        const task = tasks.find(t => t.id === draggedTaskId);
+        if (!task || task.status === newStatus) {
+            setDraggedTaskId(null);
+            return;
+        }
+
+        // Optimistic Update
+        const updatedTask = { ...task, status: newStatus };
+        setTasks(prev => prev.map(t => t.id === draggedTaskId ? updatedTask : t));
+        setDraggedTaskId(null);
+
+        // Firestore Update
+        const now = Date.now();
+        const updates: any = { 
+            status: newStatus,
+            history: [...(task.history || []), { status: newStatus, timestamp: now, userId: user.id, userName: user.name }]
+        };
+
+        if (newStatus === 'In Progress' && !task.startTime) updates.startTime = now;
+        if (newStatus === 'Done') updates.endTime = now;
+        if (task.status === 'Done' && newStatus !== 'Done') updates.endTime = null;
+
+        try {
+            await updateDoc(doc(db, "tasks", task.id), updates);
+        } catch (error) {
+            console.error("Failed to update task status:", error);
+            // Revert on failure (could improve this by storing previous state)
+            fetchData();
+        }
+    };
+
+    const filteredTasks = tasks.filter(t => {
+        const matchStack = filterStack === 'All' || t.stack === filterStack;
+        const matchPanel = filterPanel === 'All' || t.panel === filterPanel;
+        
+        let mTeam = true;
+        if (filterTeam === 'All') mTeam = true;
+        else if (filterTeam === 'No Team') mTeam = !t.teamId;
+        else mTeam = t.teamId === filterTeam;
+
+        let mAssignee = true;
+        if (filterSelf && user) {
+            mAssignee = t.assigneeId === user.id;
+        } else {
+             if (filterAssignee === 'All') mAssignee = true;
+             else if (filterAssignee === 'Unassigned') mAssignee = !t.assigneeId;
+             else mAssignee = t.assigneeId === filterAssignee;
+        }
+        
+        return matchStack && matchPanel && mTeam && mAssignee;
+    });
 
     return (
         <div className="h-[calc(100vh-140px)] flex flex-col space-y-4">
-             <div className="flex justify-between items-center">
-                <h2 className="text-2xl font-bold tracking-tight">Task Board</h2>
-                <div className="flex items-center gap-2">
-                    <div className="flex items-center space-x-2">
-                        <Label htmlFor="my-tasks" className="cursor-pointer">My Tasks Only</Label>
-                        <input id="my-tasks" type="checkbox" checked={filterSelf} onChange={e => setFilterSelf(e.target.checked)} className="h-4 w-4" />
-                    </div>
+             <div className="flex flex-col space-y-4">
+                <div className="flex justify-between items-center">
+                    <h2 className="text-2xl font-bold tracking-tight">Task Board</h2>
                     <Button variant="outline" size="sm" onClick={fetchData}><History className="mr-2 h-4 w-4" /> Refresh</Button>
                 </div>
+                
+                {/* Filters Bar */}
+                <div className="flex flex-wrap items-center gap-2 bg-white p-2 rounded-md border shadow-sm">
+                    <Filter className="h-4 w-4 text-muted-foreground mr-2" />
+                    
+                    {/* Stack Filter */}
+                    <select 
+                        className="text-sm border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer"
+                        value={filterStack}
+                        onChange={(e) => setFilterStack(e.target.value)}
+                    >
+                        <option value="All">All Stacks</option>
+                        <option value="Frontend">Frontend</option>
+                        <option value="Backend">Backend</option>
+                    </select>
+                    <div className="w-px h-4 bg-gray-200 mx-1"></div>
+
+                    {/* Panel Filter */}
+                    <select 
+                        className="text-sm border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer"
+                        value={filterPanel}
+                        onChange={(e) => setFilterPanel(e.target.value)}
+                    >
+                        <option value="All">All Panels</option>
+                        <option value="Admin">Admin</option>
+                        <option value="Customer">Customer</option>
+                    </select>
+                    <div className="w-px h-4 bg-gray-200 mx-1"></div>
+
+                    {/* Team Filter */}
+                    <select 
+                        className="text-sm border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer max-w-[150px] truncate"
+                        value={filterTeam}
+                        onChange={(e) => setFilterTeam(e.target.value)}
+                    >
+                        <option value="All">All Teams</option>
+                        <option value="No Team">No Team</option>
+                        {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                    <div className="w-px h-4 bg-gray-200 mx-1"></div>
+
+                     {/* Member Filter */}
+                    <select 
+                        className="text-sm border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer max-w-[150px] truncate disabled:opacity-50"
+                        value={filterAssignee}
+                        onChange={(e) => {
+                            setFilterAssignee(e.target.value);
+                            setFilterSelf(false); // Uncheck "My Tasks" if manually selecting
+                        }}
+                        disabled={filterSelf}
+                    >
+                        <option value="All">All Members</option>
+                        <option value="Unassigned">Unassigned</option>
+                        {usersList.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                    </select>
+
+                    <div className="w-px h-4 bg-gray-200 mx-1"></div>
+                    
+                    {/* My Tasks Toggle */}
+                     <div className="flex items-center space-x-2">
+                        <input 
+                            id="my-tasks" 
+                            type="checkbox" 
+                            checked={filterSelf} 
+                            onChange={e => {
+                                setFilterSelf(e.target.checked);
+                                if(e.target.checked) setFilterAssignee('All'); // Reset dropdown when checking self
+                            }} 
+                            className="h-4 w-4" 
+                        />
+                        <Label htmlFor="my-tasks" className="cursor-pointer text-xs">My Tasks Only</Label>
+                    </div>
+                </div>
             </div>
+
             <div className="flex-1 overflow-x-auto overflow-y-hidden">
                 <div className="flex h-full gap-4 min-w-[1000px] pb-4">
                     {COLUMNS.map(status => (
-                        <div key={status} className="flex-1 min-w-[280px] bg-muted/30 rounded-lg flex flex-col max-h-full">
-                             <div className="p-3 font-semibold text-sm text-muted-foreground flex justify-between items-center bg-muted/50 rounded-t-lg">
+                        <div 
+                            key={status} 
+                            className={`flex-1 min-w-[280px] bg-muted/30 rounded-lg flex flex-col max-h-full transition-colors ${draggedTaskId ? 'border-2 border-dashed border-transparent hover:border-primary/20' : ''}`}
+                            onDragOver={handleDragOver}
+                            onDrop={(e) => handleDrop(e, status)}
+                        >
+                             <div className="p-3 font-semibold text-sm text-muted-foreground flex justify-between items-center bg-muted/50 rounded-t-lg select-none">
                                 {status}
                                 <span className="bg-background px-2 py-0.5 rounded-full text-xs border">{filteredTasks.filter(t => t.status === status).length}</span>
                              </div>
@@ -1179,8 +1329,10 @@ export const TasksView = () => {
                                 {filteredTasks.filter(t => t.status === status).map(task => (
                                     <div 
                                         key={task.id} 
+                                        draggable
+                                        onDragStart={(e) => handleDragStart(e, task.id)}
                                         onClick={() => { setSelectedTask(task); setIsDetailOpen(true); }}
-                                        className="bg-background p-3 rounded border shadow-sm cursor-pointer hover:border-primary transition-all space-y-2 group"
+                                        className={`bg-background p-3 rounded border shadow-sm cursor-pointer hover:border-primary transition-all space-y-2 group ${draggedTaskId === task.id ? 'opacity-50 ring-2 ring-primary ring-offset-2' : ''}`}
                                     >
                                         <div className="flex justify-between items-start">
                                             <span className="text-xs font-mono text-muted-foreground truncate">{task.stack}</span>
