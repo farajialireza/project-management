@@ -3,7 +3,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { db } from '../../firebase';
 import { collection, getDocs, writeBatch, doc } from 'firebase/firestore';
 import { Button, Card, CardHeader, CardTitle, CardContent, Textarea, Label, Input, Badge } from '../ui';
-import { Loader2, FileText, Sparkles, Trash2, AlertCircle } from 'lucide-react';
+import { Loader2, FileText, Sparkles, Trash2, AlertCircle, ListTodo } from 'lucide-react';
 import { ProductBacklog } from '../../types';
 
 // Types for Generated Content
@@ -34,21 +34,17 @@ const sanitizeString = (str: any): string => (str && typeof str === 'string' ? s
 const sanitizePriority = (p: any): 'Low' | 'Medium' | 'High' => {
   const valid = ['Low', 'Medium', 'High'];
   
-  // Handle P1, P2, P3 mapping
   if (typeof p === 'string') {
      const up = p.toUpperCase();
      if (up === 'P1' || up.includes('P1')) return 'High';
      if (up === 'P2' || up.includes('P2')) return 'Medium';
-     if (up === 'P3' || up.includes('P3') || up === 'P4') return 'Low';
-     
-     // Persian mapping
+     if (up.includes('P3') || up === 'P4') return 'Low';
      if (up.includes('بالا') || up.includes('HIGH')) return 'High';
      if (up.includes('متوسط') || up.includes('MEDIUM')) return 'Medium';
      if (up.includes('پایین') || up.includes('LOW')) return 'Low';
   }
 
   if (p && valid.includes(p)) return p as 'Low' | 'Medium' | 'High';
-  // Attempt to fix case sensitivity
   if (p && typeof p === 'string') {
     const capitalized = p.charAt(0).toUpperCase() + p.slice(1).toLowerCase();
     if (valid.includes(capitalized)) return capitalized as 'Low' | 'Medium' | 'High';
@@ -57,12 +53,20 @@ const sanitizePriority = (p: any): 'Low' | 'Medium' | 'High' => {
 };
 const sanitizeNumber = (n: any): number => (typeof n === 'number' && !isNaN(n) ? n : 1);
 
+const cleanJson = (text: string) => {
+  // Try to find JSON inside code blocks first
+  const match = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (match) return match[1];
+  // If no code blocks, assume the whole text might be JSON, but trim it
+  return text.trim();
+};
+
 export const AiAssistantView = () => {
-  const [mode, setMode] = useState<'bulk' | 'feature'>('bulk');
+  const [mode, setMode] = useState<'bulk' | 'feature' | 'story'>('bulk');
 
   return (
     <div className="space-y-6">
-      <div className="flex space-x-4 border-b pb-4">
+      <div className="flex space-x-4 border-b pb-4 overflow-x-auto">
         <Button 
           variant={mode === 'bulk' ? 'default' : 'ghost'} 
           onClick={() => setMode('bulk')}
@@ -73,11 +77,19 @@ export const AiAssistantView = () => {
           variant={mode === 'feature' ? 'default' : 'ghost'} 
           onClick={() => setMode('feature')}
         >
-          <Sparkles className="mr-2 h-4 w-4" /> Feature Breakdown
+          <Sparkles className="mr-2 h-4 w-4" /> Feature Breakdown (Backlogs)
+        </Button>
+        <Button 
+          variant={mode === 'story' ? 'default' : 'ghost'} 
+          onClick={() => setMode('story')}
+        >
+          <ListTodo className="mr-2 h-4 w-4" /> Story Generator
         </Button>
       </div>
 
-      {mode === 'bulk' ? <BulkImportSection /> : <FeatureBreakdownSection />}
+      {mode === 'bulk' && <BulkImportSection />}
+      {mode === 'feature' && <FeatureBreakdownSection />}
+      {mode === 'story' && <StoryGeneratorSection />}
     </div>
   );
 };
@@ -87,6 +99,7 @@ const BulkImportSection = () => {
   const [generatedData, setGeneratedData] = useState<GeneratedData | null>(null);
   const [importing, setImporting] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [selectedPanel, setSelectedPanel] = useState<'Admin' | 'Customer'>('Admin');
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -109,29 +122,20 @@ const BulkImportSection = () => {
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      // Using gemini-flash-lite-latest as it is the cost-effective "Lite" model
-      // Using systemInstruction in config (OpenAI style separation of concerns)
       const response = await ai.models.generateContent({
-        model: 'gemini-flash-lite-latest',
+        model: 'gemini-2.5-flash',
         contents: `Analyze the following requirement document. The content is likely a Markdown table in Persian (Farsi) or English.
         Document Content:
         ${text.slice(0, 50000)}`,
         config: {
           systemInstruction: `You are an expert Agile Product Owner assistant. 
-          
-          CRITICAL: The user wants EACH ROW of the input table to be treated as a separate "Product Backlog" item. 
-          Do NOT group rows. Do NOT create user stories inside them. 
-          Return an array of 'backlogs', where each backlog corresponds to ONE row from the input. Leave the 'stories' array empty for now.
-          
+          Return an array of 'backlogs', where each backlog corresponds to ONE row from the input.
           Column Mapping Rules:
           1. ID Column (e.g., "ID", "شناسه", "Code") -> extract to 'displayId'.
           2. Title Column (e.g., "Title", "عنوان", "Subject") -> extract to 'title'.
           3. Description Column (e.g., "Description", "توضیح", "توضیحات", "توضیح اجمالی", "شرح") -> extract to 'description'.
           4. Role Column (e.g., "Role", "نقش", "Actor") -> extract to 'role'.
-          5. Priority Column (e.g., "Priority", "اولویت") -> extract to 'priority'.
-            - Map "P1", "P1", "High", "بالا" -> "High"
-            - Map "P2", "Medium", "متوسط" -> "Medium"
-            - Map "P3", "P4", "Low", "پایین" -> "Low"`,
+          5. Priority Column (e.g., "Priority", "اولویت") -> extract to 'priority'.`,
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
@@ -168,15 +172,11 @@ const BulkImportSection = () => {
       });
 
       if (response.text) {
-        setGeneratedData(JSON.parse(response.text));
+        setGeneratedData(JSON.parse(cleanJson(response.text)));
       }
     } catch (error: any) {
       console.error("AI Error:", error);
-      let msg = "Failed to generate content.";
-      if (error.message?.includes("500") || error.message?.includes("Rpc failed")) {
-         msg = "The document is too large or the AI service timed out. Please try analyzing a smaller section of the document.";
-      }
-      alert(msg);
+      alert("Failed to generate content. Check console.");
     } finally {
       setLoading(false);
     }
@@ -186,13 +186,9 @@ const BulkImportSection = () => {
     if (!generatedData) return;
     setImporting(true);
     try {
-      // Prepare all operations
       const operations: ((batch: any) => void)[] = [];
-
       for (const backlog of generatedData.backlogs) {
-        // Create ref for backlog
         const backlogRef = doc(collection(db, "product_backlogs"));
-        
         operations.push((batch) => {
           batch.set(backlogRef, {
             title: sanitizeString(backlog.title) || "Imported Backlog",
@@ -200,11 +196,10 @@ const BulkImportSection = () => {
             displayId: sanitizeString(backlog.displayId),
             role: sanitizeString(backlog.role),
             priority: sanitizePriority(backlog.priority),
+            panel: selectedPanel,
             createdAt: Date.now()
           });
         });
-
-        // If stories exist (unlikely with this specific prompt, but good for future compatibility)
         if (backlog.stories && backlog.stories.length > 0) {
             for (const story of backlog.stories) {
               const storyRef = doc(collection(db, `product_backlogs/${backlogRef.id}/user_stories`));
@@ -215,13 +210,13 @@ const BulkImportSection = () => {
                   title: sanitizeString(story.title) || "Untitled Story",
                   description: sanitizeString(story.description),
                   priority: sanitizePriority(story.priority),
-                  points: sanitizeNumber(story.points)
+                  points: sanitizeNumber(story.points),
+                  panel: selectedPanel
                 });
               });
             }
         }
       }
-
       const BATCH_SIZE = 400;
       for (let i = 0; i < operations.length; i += BATCH_SIZE) {
         const batch = writeBatch(db);
@@ -229,13 +224,12 @@ const BulkImportSection = () => {
         chunk.forEach(op => op(batch));
         await batch.commit();
       }
-
       alert(`Successfully imported ${generatedData.backlogs.length} backlogs.`);
       setGeneratedData(null);
       setText("");
     } catch (e) {
       console.error(e);
-      alert("Error importing data to database. Check console for details.");
+      alert("Error importing data.");
     } finally {
       setImporting(false);
     }
@@ -250,28 +244,24 @@ const BulkImportSection = () => {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
+            <Label>Panel (Target System)</Label>
+            <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={selectedPanel} onChange={(e) => setSelectedPanel(e.target.value as any)}>
+               <option value="Admin">Admin Panel</option>
+               <option value="Customer">Customer Panel</option>
+            </select>
+          </div>
+          <div className="space-y-2">
             <Label>Upload Markdown/Text File</Label>
-            <div className="flex items-center space-x-2">
-              <Input type="file" accept=".md,.txt" onChange={handleFileChange} />
-            </div>
+            <Input type="file" accept=".md,.txt" onChange={handleFileChange} />
           </div>
           <div className="text-center text-sm text-muted-foreground">- OR -</div>
           <div className="space-y-2">
             <Label>Paste Content</Label>
-            <Textarea 
-              className="min-h-[300px]" 
-              placeholder="Paste your requirement document or notes here..." 
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-            />
+            <Textarea className="min-h-[300px]" placeholder="Paste content here..." value={text} onChange={(e) => setText(e.target.value)} />
           </div>
           <Button onClick={handleAnalyze} disabled={loading || !text} className="w-full">
             {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analyzing...</> : "Analyze with AI"}
           </Button>
-          <div className="flex items-start gap-2 text-xs text-muted-foreground bg-secondary/30 p-2 rounded">
-             <AlertCircle className="h-4 w-4 mt-0.5" />
-             <span>If your file is very large, try splitting it into smaller chunks to avoid timeout errors.</span>
-          </div>
         </CardContent>
       </Card>
 
@@ -292,28 +282,17 @@ const BulkImportSection = () => {
                         <div className="flex items-center gap-2">
                             <span className="font-mono text-xs bg-gray-100 px-1 rounded text-gray-600">{sanitizeString(bl.displayId)}</span>
                             <h3 className="font-bold text-lg">{sanitizeString(bl.title)}</h3>
+                            <Badge variant="outline">{selectedPanel}</Badge>
                         </div>
                         {bl.priority && <Badge variant="outline">{sanitizePriority(bl.priority)}</Badge>}
                      </div>
                     {bl.role && <div className="text-xs font-semibold text-primary">Role: {sanitizeString(bl.role)}</div>}
                     <p className="text-sm text-muted-foreground">{sanitizeString(bl.description)}</p>
-                    
-                    {/* Only show stories if they exist (unlikely in this mode) */}
-                    {bl.stories && bl.stories.length > 0 && (
-                         <div className="pl-4 border-l-2 border-primary/20 space-y-2 mt-2">
-                          <p className="text-xs text-muted-foreground font-semibold">User Stories:</p>
-                          {bl.stories.map((story, j) => (
-                            <div key={j} className="bg-white p-2 rounded shadow-sm text-sm">
-                              <span className="font-medium">{sanitizeString(story.title)}</span>
-                            </div>
-                          ))}
-                        </div>
-                    )}
                   </div>
                 ))}
               </div>
               <Button onClick={handleImport} disabled={importing} className="w-full" variant="default">
-                {importing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Importing to Database...</> : "Confirm & Import to Database"}
+                {importing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Importing...</> : "Confirm & Import"}
               </Button>
             </div>
           )}
@@ -328,6 +307,7 @@ const FeatureBreakdownSection = () => {
   const [generatedBacklogs, setGeneratedBacklogs] = useState<GeneratedBacklog[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [selectedPanel, setSelectedPanel] = useState<'Admin' | 'Customer'>('Admin');
 
   const handleGenerate = async () => {
     if (!featureDescription) return;
@@ -337,17 +317,8 @@ const FeatureBreakdownSection = () => {
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
-        model: 'gemini-flash-lite-latest',
-        contents: `Workflow/Feature Description (Input):
-        ${featureDescription}
-
-        Your Task:
-        1. Analyze the description above.
-        2. Identify distinct features or requirements.
-        3. Create one or more "Product Backlog" items based on your judgment.
-        4. **IMPORTANT**: The output Title, Description, and Role MUST be in **PERSIAN (FARSI)**.
-        5. Assign a displayId, Priority (Low/Medium/High), and Role.
-        `,
+        model: 'gemini-2.5-flash',
+        contents: `Workflow/Feature Description (Input): ${featureDescription}`,
         config: {
           systemInstruction: "You are an expert Agile Product Owner fluent in Persian (Farsi). Create Product Backlogs from the user's description. Return JSON.",
           responseMimeType: "application/json",
@@ -373,10 +344,8 @@ const FeatureBreakdownSection = () => {
       });
 
       if (response.text) {
-        const data = JSON.parse(response.text);
-        if (data.backlogs) {
-            setGeneratedBacklogs(data.backlogs);
-        }
+        const data = JSON.parse(cleanJson(response.text));
+        if (data.backlogs) setGeneratedBacklogs(data.backlogs);
       }
     } catch (e) {
       console.error(e);
@@ -391,7 +360,6 @@ const FeatureBreakdownSection = () => {
     setSaving(true);
     try {
       const batch = writeBatch(db);
-      
       generatedBacklogs.forEach(bl => {
         const newDocRef = doc(collection(db, "product_backlogs"));
         batch.set(newDocRef, {
@@ -400,12 +368,11 @@ const FeatureBreakdownSection = () => {
           priority: sanitizePriority(bl.priority),
           role: sanitizeString(bl.role),
           displayId: sanitizeString(bl.displayId),
+          panel: selectedPanel,
           createdAt: Date.now()
         });
       });
-
       await batch.commit();
-
       alert("Backlogs created successfully!");
       setGeneratedBacklogs([]);
       setFeatureDescription("");
@@ -422,18 +389,19 @@ const FeatureBreakdownSection = () => {
       <Card>
         <CardHeader><CardTitle>Feature Description</CardTitle></CardHeader>
         <CardContent className="space-y-4">
+           <div className="space-y-2">
+            <Label>Panel (Target System)</Label>
+            <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={selectedPanel} onChange={(e) => setSelectedPanel(e.target.value as any)}>
+               <option value="Admin">Admin Panel</option>
+               <option value="Customer">Customer Panel</option>
+            </select>
+          </div>
           <div className="space-y-2">
             <Label>Description (Farsi)</Label>
-            <Textarea 
-              className="min-h-[200px] text-right" 
-              dir="rtl"
-              placeholder="Describe your project requirements or features in Farsi..." 
-              value={featureDescription}
-              onChange={(e) => setFeatureDescription(e.target.value)}
-            />
+            <Textarea className="min-h-[200px] text-right" dir="rtl" placeholder="Describe requirements in Farsi..." value={featureDescription} onChange={(e) => setFeatureDescription(e.target.value)} />
           </div>
           <Button onClick={handleGenerate} disabled={loading || !featureDescription} className="w-full">
-             {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analyzing & Generating...</> : "Generate Backlogs"}
+             {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analyzing...</> : "Generate Backlogs"}
           </Button>
         </CardContent>
       </Card>
@@ -457,16 +425,170 @@ const FeatureBreakdownSection = () => {
                              {bl.displayId && <span className="font-mono text-xs bg-gray-100 px-1 rounded text-gray-600">{sanitizeString(bl.displayId)}</span>}
                          </div>
                       </div>
-                      <div className="flex justify-end gap-2 my-1">
-                          <Badge variant="outline" className="whitespace-nowrap">{sanitizePriority(bl.priority)}</Badge>
-                          {bl.role && <Badge variant="secondary" className="whitespace-nowrap">{sanitizeString(bl.role)}</Badge>}
-                      </div>
                       <p className="text-xs text-muted-foreground mt-1 text-right" dir="rtl">{sanitizeString(bl.description)}</p>
                     </div>
                  ))}
                </div>
                <Button onClick={handleSave} disabled={saving} className="w-full">
-                 {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : "Confirm & Create Backlogs"}
+                 {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : "Confirm & Create"}
+               </Button>
+             </div>
+           )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
+
+const StoryGeneratorSection = () => {
+  const [backlogs, setBacklogs] = useState<ProductBacklog[]>([]);
+  const [selectedBacklogId, setSelectedBacklogId] = useState("");
+  const [workflowDescription, setWorkflowDescription] = useState("");
+  const [generatedStories, setGeneratedStories] = useState<GeneratedStory[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const fetch = async () => {
+      const snap = await getDocs(collection(db, "product_backlogs"));
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as ProductBacklog));
+      data.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+      setBacklogs(data);
+    };
+    fetch();
+  }, []);
+
+  const handleGenerate = async () => {
+    if (!workflowDescription || !selectedBacklogId) return;
+    setLoading(true);
+    setGeneratedStories([]);
+    const selectedBacklog = backlogs.find(b => b.id === selectedBacklogId);
+    const contextPrompt = selectedBacklog ? `Parent Backlog Context: Title: "${selectedBacklog.title}", Description: "${selectedBacklog.description}"` : "";
+
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: `Workflow Description (Input): ${workflowDescription} \n ${contextPrompt}`,
+        config: {
+          systemInstruction: "You are an expert Agile Product Owner fluent in Persian (Farsi). Generate detailed User Stories in Farsi. Return JSON.",
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              stories: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    description: { type: Type.STRING },
+                    priority: { type: Type.STRING },
+                    points: { type: Type.NUMBER },
+                    role: { type: Type.STRING },
+                    displayId: { type: Type.STRING }
+                  }
+                }
+              }
+            }
+          }
+        }
+      });
+
+      if (response.text) {
+        const data = JSON.parse(cleanJson(response.text));
+        if (data.stories) setGeneratedStories(data.stories);
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Failed to generate stories. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (generatedStories.length === 0 || !selectedBacklogId) return;
+    setSaving(true);
+    const parentBacklog = backlogs.find(b => b.id === selectedBacklogId);
+    const inheritedPanel = parentBacklog?.panel || 'Admin';
+
+    try {
+      const batch = writeBatch(db);
+      const collectionRef = collection(db, `product_backlogs/${selectedBacklogId}/user_stories`);
+      generatedStories.forEach(story => {
+        const newDocRef = doc(collectionRef);
+        batch.set(newDocRef, {
+          backlogId: selectedBacklogId,
+          title: sanitizeString(story.title) || "Untitled Story",
+          description: sanitizeString(story.description),
+          priority: sanitizePriority(story.priority),
+          points: sanitizeNumber(story.points),
+          role: sanitizeString(story.role),
+          displayId: sanitizeString(story.displayId),
+          panel: inheritedPanel
+        });
+      });
+      await batch.commit();
+      alert("Stories saved successfully!");
+      setGeneratedStories([]);
+      setWorkflowDescription("");
+    } catch (e) {
+      console.error(e);
+      alert("Error saving stories.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <Card>
+        <CardHeader><CardTitle>Story Details</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+           <div className="space-y-2">
+            <Label>Select Parent Backlog</Label>
+            <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={selectedBacklogId} onChange={(e) => setSelectedBacklogId(e.target.value)}>
+              <option value="">-- Select a Backlog --</option>
+              {backlogs.map(b => <option key={b.id} value={b.id}>{b.displayId ? `[${b.displayId}] ` : ''}{b.title} ({b.panel || 'Admin'})</option>)}
+            </select>
+          </div>
+          <div className="space-y-2">
+            <Label>Workflow / Requirements (Farsi)</Label>
+            <Textarea className="min-h-[200px] text-right" dir="rtl" placeholder="Describe workflow in Farsi..." value={workflowDescription} onChange={(e) => setWorkflowDescription(e.target.value)} />
+          </div>
+          <Button onClick={handleGenerate} disabled={loading || !workflowDescription || !selectedBacklogId} className="w-full">
+             {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analyzing...</> : "Generate User Stories"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>Generated Stories</CardTitle></CardHeader>
+        <CardContent>
+           {generatedStories.length === 0 ? (
+             <div className="flex flex-col items-center justify-center h-[200px] text-muted-foreground border-2 border-dashed rounded-lg">
+              <ListTodo className="h-10 w-10 mb-2 opacity-50" />
+              <p>Generated stories will appear here</p>
+            </div>
+           ) : (
+             <div className="space-y-4">
+               <div className="max-h-[400px] overflow-y-auto space-y-2 pr-2">
+                 {generatedStories.map((story, i) => (
+                    <div key={i} className="border rounded p-3 bg-white shadow-sm">
+                      <div className="flex justify-between items-start mb-1">
+                        <span className="font-semibold text-sm w-full text-right" dir="rtl">{sanitizeString(story.title)}</span>
+                        <div className="flex gap-2 ml-2">
+                             <Badge variant="outline" className="whitespace-nowrap">{sanitizeNumber(story.points)} pts</Badge>
+                             <Badge variant={sanitizePriority(story.priority) === 'High' ? 'destructive' : 'secondary'} className="whitespace-nowrap">{sanitizePriority(story.priority)}</Badge>
+                        </div>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1 text-right" dir="rtl">{sanitizeString(story.description)}</p>
+                    </div>
+                 ))}
+               </div>
+               <Button onClick={handleSave} disabled={saving} className="w-full">
+                 {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : "Confirm & Save Stories"}
                </Button>
              </div>
            )}

@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { Button, Input, Label, Card, CardContent, CardHeader, CardTitle } from './ui';
@@ -14,20 +13,22 @@ export const Auth = () => {
     setLoading(true);
     try {
       if (isLogin) {
-        await signInWithEmailAndPassword(auth, data.email, data.password);
+        await auth.signInWithEmailAndPassword(data.email, data.password);
       } else {
         // Sign Up
-        const cred = await createUserWithEmailAndPassword(auth, data.email, data.password);
-        await updateProfile(cred.user, { displayName: data.name });
-        
-        // Create User Document
-        const isAdmin = data.email === 'realovatsug@gmail.com';
-        await setDoc(doc(db, "users", cred.user.uid), {
-          id: cred.user.uid,
-          name: data.name,
-          email: data.email,
-          isAdmin: isAdmin
-        });
+        const cred = await auth.createUserWithEmailAndPassword(data.email, data.password);
+        if (cred.user) {
+            await cred.user.updateProfile({ displayName: data.name });
+            
+            // Create User Document
+            const isAdmin = data.email === 'realovatsug@gmail.com';
+            await setDoc(doc(db, "users", cred.user.uid), {
+              id: cred.user.uid,
+              name: data.name,
+              email: data.email,
+              isAdmin: isAdmin
+            });
+        }
       }
     } catch (e: any) {
       setError('root', { message: e.message });

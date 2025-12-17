@@ -1,5 +1,5 @@
 import firebase from "firebase/compat/app";
-import { getAuth } from "firebase/auth";
+import "firebase/compat/auth";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
@@ -14,5 +14,5 @@ const firebaseConfig = {
 
 // Initialize only if not already initialized (prevent hot-reload issues)
 const app = firebase.apps.length > 0 ? firebase.app() : firebase.initializeApp(firebaseConfig);
-export const auth = getAuth(app);
+export const auth = app.auth();
 export const db = getFirestore(app);

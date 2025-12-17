@@ -22,6 +22,7 @@ export interface ProductBacklog {
   displayId?: string;
   role?: string;
   priority?: 'Low' | 'Medium' | 'High';
+  panel?: 'Admin' | 'Customer';
 }
 
 export interface UserStory {
@@ -33,6 +34,7 @@ export interface UserStory {
   points: number;
   role?: string;
   displayId?: string;
+  panel?: 'Admin' | 'Customer';
 }
 
 export interface Milestone {
@@ -44,15 +46,47 @@ export interface Milestone {
   status: 'Planned' | 'Active' | 'Completed';
 }
 
+export interface TaskHistory {
+  status: string;
+  timestamp: number;
+  userId: string;
+  userName: string;
+}
+
+export interface TaskComment {
+  id: string;
+  userId: string;
+  userName: string;
+  text: string;
+  timestamp: number;
+}
+
 export interface Task {
   id: string;
   title: string;
-  description: string;
-  status: 'To Do' | 'In Progress' | 'Done';
-  teamId: string;
+  description: string; // Markdown
+  status: 'To Do' | 'In Progress' | 'Testing' | 'Review' | 'Done';
+  
+  // Relationships
+  userStoryId: string;
+  backlogId: string;
+  teamId?: string;
   assigneeId?: string;
   milestoneId?: string;
-  userStoryId: string; // Made mandatory to enforce hierarchy
-  backlogId: string;   // Added for easier querying
+
+  // Attributes
+  stack: 'Frontend' | 'Backend';
+  panel: 'Admin' | 'Customer'; // Inherited from Story
+  
+  // Tracking
   createdAt: number;
+  startTime?: number; // First transition to In Progress
+  endTime?: number; // Transition to Done
+  
+  history?: TaskHistory[];
+  comments?: TaskComment[];
+  
+  // Audit
+  createdBy?: { userId: string; userName: string; };
+  lastEditedBy?: { userId: string; userName: string; timestamp: number; };
 }
