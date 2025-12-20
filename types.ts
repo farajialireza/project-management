@@ -44,6 +44,7 @@ export interface Milestone {
   startDate: string;
   endDate: string;
   status: 'Planned' | 'Active' | 'Completed';
+  userStoryIds?: string[];
 }
 
 export interface TaskHistory {
