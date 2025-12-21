@@ -31,38 +31,72 @@ export const BacklogsView = () => {
   const [backlogs, setBacklogs] = useState<ProductBacklog[]>([]);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const { register, handleSubmit, reset, setValue } = useForm<ProductBacklog>();
 
   const [filterPanel, setFilterPanel] = useState<string>('All');
   const [filterPriority, setFilterPriority] = useState<string>('All');
 
   const fetchBacklogs = async () => {
-    const querySnapshot = await getDocs(collection(db, "product_backlogs"));
-    const data = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() } as ProductBacklog));
-    data.sort((a, b) => (a.displayId || "").localeCompare(b.displayId || "") || a.title.localeCompare(b.title));
-    setBacklogs(data);
+    try {
+      const querySnapshot = await getDocs(collection(db, "product_backlogs"));
+      const data = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() } as ProductBacklog));
+      data.sort((a, b) => (a.displayId || "").localeCompare(b.displayId || "") || a.title.localeCompare(b.title));
+      setBacklogs(data);
+    } catch (error) {
+      console.error("Error fetching backlogs:", error);
+    }
   };
 
   useEffect(() => { fetchBacklogs(); }, []);
 
   const onDelete = async (id: string, e: React.MouseEvent) => {
+    e.preventDefault();
     e.stopPropagation();
-    if (confirm("Are you sure you want to delete this backlog? All stories inside it will be lost.")) {
-      try {
-        const storiesRef = collection(db, "product_backlogs", id, "user_stories");
-        const storiesSnap = await getDocs(storiesRef);
-        const batch = writeBatch(db);
-        storiesSnap.docs.forEach((storyDoc) => {
-            batch.delete(storyDoc.ref);
-        });
-        const backlogRef = doc(db, "product_backlogs", id);
-        batch.delete(backlogRef);
-        await batch.commit();
-        setBacklogs(prev => prev.filter(b => b.id !== id));
-      } catch (error) {
-        console.error("Error deleting backlog:", error);
-        alert("Failed to delete backlog.");
-      }
+    
+    if (!id || deletingId) return;
+
+    const confirmMessage = "آیا مطمئن هستید؟ با حذف این بکلگ، تمام یوزر استوری‌ها و تسک‌های مرتبط با آن نیز برای همیشه پاک خواهند شد.";
+    if (!window.confirm(confirmMessage)) return;
+
+    setDeletingId(id);
+    console.log("Starting deletion for backlog:", id);
+
+    try {
+      const batch = writeBatch(db);
+
+      // 1. یافتن تسک‌های مرتبط
+      const tasksQuery = query(collection(db, "tasks"), where("backlogId", "==", id));
+      const tasksSnap = await getDocs(tasksQuery);
+      console.log(`Found ${tasksSnap.size} tasks to delete.`);
+      tasksSnap.docs.forEach(taskDoc => {
+        batch.delete(taskDoc.ref);
+      });
+
+      // 2. یافتن استوری‌های مرتبط
+      const storiesRef = collection(db, "product_backlogs", id, "user_stories");
+      const storiesSnap = await getDocs(storiesRef);
+      console.log(`Found ${storiesSnap.size} stories to delete.`);
+      storiesSnap.docs.forEach(storyDoc => {
+        batch.delete(storyDoc.ref);
+      });
+
+      // 3. حذف بکلگ اصلی
+      const backlogRef = doc(db, "product_backlogs", id);
+      batch.delete(backlogRef);
+
+      // اجرای نهایی عملیات گروهی
+      await batch.commit();
+      console.log("Batch commit successful.");
+
+      // بروزرسانی وضعیت محلی
+      setBacklogs(prev => prev.filter(b => b.id !== id));
+      alert("بکلگ و تمامی داده‌های مرتبط با موفقیت حذف شدند.");
+    } catch (error: any) {
+      console.error("Critical error during backlog deletion:", error);
+      alert("خطا در حذف بکلگ: " + (error.message || "خطای ناشناخته"));
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -79,15 +113,20 @@ export const BacklogsView = () => {
   };
 
   const onSubmit = async (data: any) => {
-    if (editingId) {
-      await updateDoc(doc(db, "product_backlogs", editingId), data);
-    } else {
-      await addDoc(collection(db, "product_backlogs"), { ...data, createdAt: Date.now() });
+    try {
+      if (editingId) {
+        await updateDoc(doc(db, "product_backlogs", editingId), data);
+      } else {
+        await addDoc(collection(db, "product_backlogs"), { ...data, createdAt: Date.now() });
+      }
+      setIsDialogOpen(false);
+      reset();
+      setEditingId(null);
+      fetchBacklogs();
+    } catch (error) {
+      console.error("Error saving backlog:", error);
+      alert("خطا در ذخیره‌سازی.");
     }
-    setIsDialogOpen(false);
-    reset();
-    setEditingId(null);
-    fetchBacklogs();
   };
 
   const openNew = () => {
@@ -170,14 +209,41 @@ export const BacklogsView = () => {
                  {user?.isAdmin && (
                   <TableCell>
                     <div className="flex space-x-2">
-                      <Button variant="ghost" size="icon" onClick={(e) => onEdit(bl, e)}><Edit2 className="h-4 w-4" /></Button>
-                      <Button variant="ghost" size="icon" className="text-destructive" onClick={(e) => onDelete(bl.id, e)}><Trash2 className="h-4 w-4" /></Button>
+                      <Button 
+                        type="button"
+                        variant="ghost" 
+                        size="icon" 
+                        onClick={(e) => onEdit(bl, e)} 
+                        disabled={deletingId === bl.id}
+                      >
+                        <Edit2 className="h-4 w-4" />
+                      </Button>
+                      <Button 
+                        type="button"
+                        variant="ghost" 
+                        size="icon" 
+                        className="text-destructive" 
+                        onClick={(e) => onDelete(bl.id, e)}
+                        disabled={deletingId === bl.id}
+                      >
+                        {deletingId === bl.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-4 w-4" />
+                        )}
+                      </Button>
                     </div>
                   </TableCell>
                 )}
               </TableRow>
             ))}
-            {filteredBacklogs.length === 0 && <TableRow><TableCell colSpan={7} className="text-center">No backlogs found.</TableCell></TableRow>}
+            {filteredBacklogs.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground italic">
+                  No backlogs found.
+                </TableCell>
+              </TableRow>
+            )}
           </TableBody>
         </Table>
       </Card>
@@ -626,11 +692,27 @@ export const StoriesView = () => {
 
   const onDeleteStory = async (story: UserStory, e: React.MouseEvent) => {
     e.stopPropagation();
-    if(confirm(`Delete "${story.title}"?`)) {
+    if(confirm(`آیا مطمئن هستید که می‌خواهید استوری "${story.title}" را به همراه تمام تسک‌های آن حذف کنید؟`)) {
         try {
-            await deleteDoc(doc(db, `product_backlogs/${story.backlogId}/user_stories`, story.id));
+            const batch = writeBatch(db);
+
+            // 1. حذف تمام تسک‌های متصل به این استوری
+            const tasksQuery = query(collection(db, "tasks"), where("userStoryId", "==", story.id));
+            const tasksSnap = await getDocs(tasksQuery);
+            tasksSnap.docs.forEach(taskDoc => {
+              batch.delete(taskDoc.ref);
+            });
+
+            // 2. حذف خود استوری
+            const storyRef = doc(db, `product_backlogs/${story.backlogId}/user_stories`, story.id);
+            batch.delete(storyRef);
+
+            await batch.commit();
             fetchData();
-        } catch (err) { alert("Failed to delete story."); }
+        } catch (err) { 
+          console.error(err);
+          alert("خطا در حذف استوری."); 
+        }
     }
   };
 
@@ -1120,7 +1202,7 @@ const MilestoneDetailModal = ({ milestone, isOpen, onClose, allStories, teams, u
              {/* Content */}
              <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
                 <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
-                    <Layout className="h-5 w-5" /> Linked User Stories ({linkedStories.length})
+                    <BarChart3 className="h-5 w-5" /> Linked User Stories ({linkedStories.length})
                 </h3>
                 
                 {linkedStories.length === 0 ? (
@@ -1311,7 +1393,7 @@ export const MilestonesView = () => {
 
   const onDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (confirm("Delete this milestone?")) {
+    if (confirm("آیا مایل‌ستون را حذف می‌کنید؟")) {
       await deleteDoc(doc(db, "milestones", id));
       fetchData();
     }
@@ -1332,17 +1414,21 @@ export const MilestonesView = () => {
 
   const onSubmit = async (data: any) => {
     const payload = { ...data, userStoryIds: selectedStoryIds };
-    if (editingId) {
-      await updateDoc(doc(db, "milestones", editingId), payload);
-    } else {
-      await addDoc(collection(db, "milestones"), payload);
+    try {
+      if (editingId) {
+        await updateDoc(doc(db, "milestones", editingId), payload);
+      } else {
+        await addDoc(collection(db, "milestones"), payload);
+      }
+      setIsDialogOpen(false);
+      reset();
+      setEditingId(null);
+      setSelectedStoryIds([]);
+      setStorySearch("");
+      fetchData();
+    } catch (error) {
+      console.error(error);
     }
-    setIsDialogOpen(false);
-    reset();
-    setEditingId(null);
-    setSelectedStoryIds([]);
-    setStorySearch("");
-    fetchData();
   };
 
   const toggleStory = (sid: string) => {
@@ -1516,14 +1602,18 @@ export const TasksView = () => {
     const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
 
     const fetchData = async () => {
-        const [tSnap, tmSnap, uSnap] = await Promise.all([
-            getDocs(collection(db, "tasks")),
-            getDocs(collection(db, "teams")),
-            getDocs(collection(db, "users"))
-        ]);
-        setTasks(tSnap.docs.map(d => ({ id: d.id, ...d.data() } as Task)));
-        setTeams(tmSnap.docs.map(d => ({ id: d.id, ...d.data() } as Team)));
-        setUsersList(uSnap.docs.map(d => ({ id: d.id, ...d.data() } as User)));
+        try {
+          const [tSnap, tmSnap, uSnap] = await Promise.all([
+              getDocs(collection(db, "tasks")),
+              getDocs(collection(db, "teams")),
+              getDocs(collection(db, "users"))
+          ]);
+          setTasks(tSnap.docs.map(d => ({ id: d.id, ...d.data() } as Task)));
+          setTeams(tmSnap.docs.map(d => ({ id: d.id, ...d.data() } as Team)));
+          setUsersList(uSnap.docs.map(d => ({ id: d.id, ...d.data() } as User)));
+        } catch (error) {
+          console.error(error);
+        }
     };
 
     useEffect(() => { fetchData(); }, []);
