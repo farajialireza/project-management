@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { GoogleGenAI, Type } from "@google/genai";
 import { db } from '../../firebase';
@@ -123,7 +124,7 @@ const BulkImportSection = () => {
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3-flash-preview',
         contents: `Analyze the following requirement document. The content is likely a Markdown table in Persian (Farsi) or English.
         Document Content:
         ${text.slice(0, 50000)}`,
@@ -317,7 +318,7 @@ const FeatureBreakdownSection = () => {
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3-flash-preview',
         contents: `Workflow/Feature Description (Input): ${featureDescription}`,
         config: {
           systemInstruction: "You are an expert Agile Product Owner fluent in Persian (Farsi). Create Product Backlogs from the user's description. Return JSON.",
@@ -463,15 +464,18 @@ const StoryGeneratorSection = () => {
     setLoading(true);
     setGeneratedStories([]);
     const selectedBacklog = backlogs.find(b => b.id === selectedBacklogId);
-    const contextPrompt = selectedBacklog ? `Parent Backlog Context: Title: "${selectedBacklog.title}", Description: "${selectedBacklog.description}"` : "";
+    // Added Role information to the context prompt for the AI
+    const contextPrompt = selectedBacklog 
+      ? `Parent Backlog Context: Title: "${selectedBacklog.title}", Description: "${selectedBacklog.description}", Role/Actor: "${selectedBacklog.role || 'User'}"` 
+      : "";
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3-flash-preview',
         contents: `Workflow Description (Input): ${workflowDescription} \n ${contextPrompt}`,
         config: {
-          systemInstruction: "You are an expert Agile Product Owner fluent in Persian (Farsi). Generate detailed User Stories in Farsi. Return JSON.",
+          systemInstruction: "You are an expert Agile Product Owner fluent in Persian (Farsi). Generate detailed User Stories in Farsi. Ensure stories align with the provided role/actor. Return JSON.",
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
@@ -512,6 +516,7 @@ const StoryGeneratorSection = () => {
     setSaving(true);
     const parentBacklog = backlogs.find(b => b.id === selectedBacklogId);
     const inheritedPanel = parentBacklog?.panel || 'Admin';
+    const inheritedRole = parentBacklog?.role || ''; // Inherit role from the selected parent backlog
 
     try {
       const batch = writeBatch(db);
@@ -524,7 +529,7 @@ const StoryGeneratorSection = () => {
           description: sanitizeString(story.description),
           priority: sanitizePriority(story.priority),
           points: sanitizeNumber(story.points),
-          role: sanitizeString(story.role),
+          role: inheritedRole, // Use the role from the selected parent backlog instead of generated role
           displayId: sanitizeString(story.displayId),
           panel: inheritedPanel
         });

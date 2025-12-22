@@ -4,7 +4,7 @@ import { db } from '../../firebase';
 import { collection, addDoc, getDocs, doc, deleteDoc, updateDoc, writeBatch, query, where, collectionGroup } from 'firebase/firestore';
 import { Button, Table, TableHeader, TableRow, TableHead, TableBody, TableCell, Dialog, DialogHeader, DialogTitle, Input, Label, DialogFooter, Badge, Card, CardHeader, CardTitle, CardContent, Textarea } from '../ui';
 import { ProductBacklog, UserStory, Milestone, Task, Team, User, TaskComment } from '../../types';
-import { Plus, Trash2, Edit2, ChevronDown, ChevronRight, ListTodo, Sparkles, MessageSquare, History, User as UserIcon, Clock, Loader2, CheckCircle, Save, X, Filter, Search, Calendar, Layout, BarChart3 } from 'lucide-react';
+import { Plus, Trash2, Edit2, ChevronDown, ChevronRight, ListTodo, Sparkles, MessageSquare, History, User as UserIcon, Users as UsersIcon, Clock, Loader2, CheckCircle, Save, X, Filter, Search, Calendar, Layout, BarChart3, FileText, Info } from 'lucide-react';
 import { useAuth } from '../../App';
 import ReactMarkdown from 'react-markdown';
 import { GoogleGenAI, Type } from "@google/genai";
@@ -60,36 +60,25 @@ export const BacklogsView = () => {
     if (!window.confirm(confirmMessage)) return;
 
     setDeletingId(id);
-    console.log("Starting deletion for backlog:", id);
 
     try {
       const batch = writeBatch(db);
-
-      // 1. یافتن تسک‌های مرتبط
       const tasksQuery = query(collection(db, "tasks"), where("backlogId", "==", id));
       const tasksSnap = await getDocs(tasksQuery);
-      console.log(`Found ${tasksSnap.size} tasks to delete.`);
       tasksSnap.docs.forEach(taskDoc => {
         batch.delete(taskDoc.ref);
       });
 
-      // 2. یافتن استوری‌های مرتبط
       const storiesRef = collection(db, "product_backlogs", id, "user_stories");
       const storiesSnap = await getDocs(storiesRef);
-      console.log(`Found ${storiesSnap.size} stories to delete.`);
       storiesSnap.docs.forEach(storyDoc => {
         batch.delete(storyDoc.ref);
       });
 
-      // 3. حذف بکلگ اصلی
       const backlogRef = doc(db, "product_backlogs", id);
       batch.delete(backlogRef);
 
-      // اجرای نهایی عملیات گروهی
       await batch.commit();
-      console.log("Batch commit successful.");
-
-      // بروزرسانی وضعیت محلی
       setBacklogs(prev => prev.filter(b => b.id !== id));
       alert("بکلگ و تمامی داده‌های مرتبط با موفقیت حذف شدند.");
     } catch (error: any) {
@@ -296,13 +285,14 @@ export const BacklogsView = () => {
 };
 
 // --- Shared Task Detail Modal ---
-const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, usersList }: { task: Task | null, isOpen: boolean, onClose: () => void, onUpdate: (t: Task) => void, onDelete: (id: string) => void, teams: Team[], usersList: User[] }) => {
+const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, usersList, allStories }: { task: Task | null, isOpen: boolean, onClose: () => void, onUpdate: (t: Task) => void, onDelete: (id: string) => void, teams: Team[], usersList: User[], allStories: UserStory[] }) => {
     const { user } = useAuth();
     const [isEditing, setIsEditing] = useState(false);
     const [editForm, setEditForm] = useState<Partial<Task>>({});
     
     const teamLeaderId = task?.teamId ? teams.find(t => t.id === task.teamId)?.leaderId : null;
     const canEdit = user?.isAdmin || (user && teamLeaderId === user.id);
+    const parentStory = allStories.find(s => s.id === task?.userStoryId);
 
     useEffect(() => {
         if (task) {
@@ -390,12 +380,18 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
     return (
         <Dialog open={isOpen} onOpenChange={(v) => { if(!v) onClose(); }}>
              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
-                <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl h-[85vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+                <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
                     <div className="p-4 border-b flex justify-between items-start bg-slate-50">
                         <div className="space-y-1 flex-1 mr-4">
-                            <div className="flex gap-2 mb-2">
+                            <div className="flex flex-wrap gap-2 mb-2">
                                 <Badge variant="outline">{task.panel}</Badge>
                                 {!isEditing && <Badge variant="secondary">{task.stack}</Badge>}
+                                {parentStory && (
+                                   <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 flex items-center gap-1">
+                                      <Layout className="h-3 w-3" />
+                                      {parentStory.displayId ? `${parentStory.displayId}: ` : ''}{parentStory.title}
+                                   </Badge>
+                                )}
                             </div>
                             {isEditing ? (
                                 <Input 
@@ -437,30 +433,53 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
                     </div>
                     
                     <div className="flex-1 overflow-y-auto p-0 flex flex-col md:flex-row">
-                        <div className="flex-1 p-6 space-y-6 border-r">
-                             {isEditing ? (
-                                 <div className="space-y-2">
-                                     <Label>Description (Markdown)</Label>
-                                     <Textarea 
-                                        value={editForm.description} 
-                                        onChange={e => setEditForm({...editForm, description: e.target.value})}
-                                        className="min-h-[200px]"
-                                     />
-                                 </div>
-                             ) : (
-                                <div className="prose prose-sm max-w-none">
-                                    <h3 className="text-sm font-semibold text-muted-foreground mb-2">Description</h3>
-                                    <div className="markdown-body p-3 bg-slate-50 rounded-md border min-h-[100px]" dir="auto">
-                                        <ReactMarkdown>{task.description || "*No description provided.*"}</ReactMarkdown>
+                        <div className="flex-1 p-6 space-y-8 border-r">
+                             {/* TASK DESCRIPTION SECTION (MOVING TO TOP) */}
+                             <div className="space-y-6">
+                                {isEditing ? (
+                                    <div className="space-y-2">
+                                        <Label className="text-sm font-semibold flex items-center gap-2">
+                                            <FileText className="h-4 w-4" /> Task Description (Markdown)
+                                        </Label>
+                                        <Textarea 
+                                            value={editForm.description} 
+                                            onChange={e => setEditForm({...editForm, description: e.target.value})}
+                                            className="min-h-[250px]"
+                                        />
                                     </div>
+                                ) : (
+                                    <div className="prose prose-sm max-w-none">
+                                        <h3 className="text-sm font-semibold text-muted-foreground flex items-center gap-2 mb-3">
+                                            <FileText className="h-4 w-4" /> Task Description
+                                        </h3>
+                                        <div className="markdown-body p-4 bg-slate-50 rounded-lg border min-h-[120px]" dir="auto">
+                                            <ReactMarkdown>{task.description || "*No task description provided.*"}</ReactMarkdown>
+                                        </div>
+                                    </div>
+                                )}
+                             </div>
+
+                             {/* STORY CONTEXT BOX (MOVING BELOW DESCRIPTION) */}
+                             {parentStory && (
+                                <div className="bg-blue-50/50 rounded-lg border border-blue-100 overflow-hidden">
+                                   <div className="bg-blue-100/50 px-3 py-1.5 flex items-center gap-2 border-b border-blue-100">
+                                      <Info className="h-4 w-4 text-blue-600" />
+                                      <span className="text-xs font-bold text-blue-800 uppercase tracking-wider">User Story Context</span>
+                                   </div>
+                                   <div className="p-4 space-y-2">
+                                      <h4 className="font-bold text-blue-900 text-sm">{parentStory.title}</h4>
+                                      <div className="prose prose-sm max-w-none text-blue-800/80 italic text-xs leading-relaxed" dir="auto">
+                                         <ReactMarkdown>{parentStory.description || "*No description provided for this story.*"}</ReactMarkdown>
+                                      </div>
+                                   </div>
                                 </div>
                              )}
 
-                             <div className="space-y-4">
+                             <div className="space-y-4 pt-4 border-t">
                                 <h3 className="text-sm font-semibold text-muted-foreground flex items-center gap-2"><MessageSquare className="h-4 w-4"/> Comments</h3>
                                 <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2">
                                     {task.comments?.map(c => (
-                                        <div key={c.id} className="bg-slate-50 p-3 rounded-lg text-sm space-y-1">
+                                        <div key={c.id} className="bg-slate-50 p-3 rounded-lg text-sm space-y-1 border border-slate-100">
                                             <div className="flex justify-between">
                                                 <span className="font-semibold">{c.userName}</span>
                                                 <span className="text-xs text-muted-foreground">{new Date(c.timestamp).toLocaleString()}</span>
@@ -486,9 +505,9 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
                              </div>
                         </div>
 
-                        <div className="w-full md:w-72 bg-slate-50 p-4 space-y-6 text-sm overflow-y-auto">
+                        <div className="w-full md:w-80 bg-slate-50 p-4 space-y-6 text-sm overflow-y-auto">
                             <div className="space-y-3">
-                                <span className="text-muted-foreground block text-xs uppercase font-bold">Assignments & Stack</span>
+                                <span className="text-muted-foreground block text-xs uppercase font-bold tracking-tight">Assignments & Stack</span>
                                 {isEditing ? (
                                     <>
                                         <div className="space-y-1">
@@ -527,43 +546,58 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
                                     </>
                                 ) : (
                                     <>
-                                        <div className="bg-white p-2 rounded border shadow-sm">
-                                            <div className="text-xs text-muted-foreground">Team</div>
-                                            <div className="font-medium">{teams.find(t => t.id === task.teamId)?.name || 'None'}</div>
+                                        <div className="bg-white p-3 rounded-lg border shadow-sm">
+                                            <div className="text-[10px] text-muted-foreground uppercase font-bold mb-1">Team</div>
+                                            <div className="font-medium flex items-center gap-2">
+                                                <UsersIcon className="h-3.5 w-3.5 text-primary" />
+                                                {teams.find(t => t.id === task.teamId)?.name || 'None'}
+                                            </div>
                                         </div>
-                                        <div className="bg-white p-2 rounded border shadow-sm">
-                                            <div className="text-xs text-muted-foreground">Assignee</div>
-                                            <div className="font-medium">{usersList.find(u => u.id === task.assigneeId)?.name || 'Unassigned'}</div>
+                                        <div className="bg-white p-3 rounded-lg border shadow-sm">
+                                            <div className="text-[10px] text-muted-foreground uppercase font-bold mb-1">Assignee</div>
+                                            <div className="font-medium flex items-center gap-2">
+                                                <UserIcon className="h-3.5 w-3.5 text-primary" />
+                                                {usersList.find(u => u.id === task.assigneeId)?.name || 'Unassigned'}
+                                            </div>
                                         </div>
                                     </>
                                 )}
                             </div>
                             
                             <div className="space-y-2">
-                                <span className="text-muted-foreground block text-xs uppercase font-bold">Audit</span>
-                                <div className="text-xs text-slate-600 bg-white p-2 rounded border">
+                                <span className="text-muted-foreground block text-xs uppercase font-bold tracking-tight">Audit</span>
+                                <div className="text-xs text-slate-600 bg-white p-3 rounded-lg border shadow-sm space-y-2">
                                     {task.createdBy ? (
-                                        <div className="mb-1"><strong>Created by:</strong> {task.createdBy.userName}</div>
-                                    ) : <div className="mb-1 text-muted-foreground italic">Creator not recorded</div>}
+                                        <div>
+                                            <div className="text-[10px] text-muted-foreground uppercase font-bold">Created by</div>
+                                            <div className="font-medium">{task.createdBy.userName}</div>
+                                            <div className="text-[10px] text-muted-foreground">{new Date(task.createdAt).toLocaleString()}</div>
+                                        </div>
+                                    ) : <div className="text-muted-foreground italic">Creator not recorded</div>}
                                     
                                     {task.lastEditedBy ? (
-                                        <div>
-                                            <strong>Edited by:</strong> {task.lastEditedBy.userName}
-                                            <br/><span className="text-[10px] text-muted-foreground">{new Date(task.lastEditedBy.timestamp).toLocaleString()}</span>
+                                        <div className="pt-2 border-t">
+                                            <div className="text-[10px] text-muted-foreground uppercase font-bold">Last edited by</div>
+                                            <div className="font-medium">{task.lastEditedBy.userName}</div>
+                                            <div className="text-[10px] text-muted-foreground">{new Date(task.lastEditedBy.timestamp).toLocaleString()}</div>
                                         </div>
-                                    ) : <div className="text-muted-foreground italic">No edits recorded</div>}
+                                    ) : <div className="text-muted-foreground italic pt-2 border-t">No edits recorded</div>}
                                 </div>
                             </div>
 
-                            <div className="space-y-2">
-                                <span className="text-muted-foreground block text-xs uppercase font-bold">History</span>
-                                <div className="space-y-2 relative border-l ml-2 pl-4">
+                            <div className="space-y-3">
+                                <span className="text-muted-foreground block text-xs uppercase font-bold tracking-tight">Lifecycle History</span>
+                                <div className="space-y-4 relative border-l-2 ml-2 pl-4 py-1 border-slate-200">
                                     {task.history?.slice().reverse().map((h, i) => (
                                         <div key={i} className="relative text-xs">
-                                            <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-slate-300 border-2 border-white"></div>
-                                            <div className="font-medium text-slate-700">{h.status}</div>
-                                            <div className="text-muted-foreground">{h.userName}</div>
-                                            <div className="text-[10px] text-muted-foreground">{new Date(h.timestamp).toLocaleString()}</div>
+                                            <div className="absolute -left-[23px] top-1 w-3 h-3 rounded-full bg-white border-2 border-primary"></div>
+                                            <div className="font-bold text-slate-900">{h.status}</div>
+                                            <div className="text-muted-foreground font-medium flex items-center gap-1">
+                                                <UserIcon className="h-2.5 w-2.5" /> {h.userName}
+                                            </div>
+                                            <div className="text-[10px] text-muted-foreground flex items-center gap-1">
+                                                <Clock className="h-2.5 w-2.5" /> {new Date(h.timestamp).toLocaleString()}
+                                            </div>
                                         </div>
                                     ))}
                                 </div>
@@ -695,15 +729,12 @@ export const StoriesView = () => {
     if(confirm(`آیا مطمئن هستید که می‌خواهید استوری "${story.title}" را به همراه تمام تسک‌های آن حذف کنید؟`)) {
         try {
             const batch = writeBatch(db);
-
-            // 1. حذف تمام تسک‌های متصل به این استوری
             const tasksQuery = query(collection(db, "tasks"), where("userStoryId", "==", story.id));
             const tasksSnap = await getDocs(tasksQuery);
             tasksSnap.docs.forEach(taskDoc => {
               batch.delete(taskDoc.ref);
             });
 
-            // 2. حذف خود استوری
             const storyRef = doc(db, `product_backlogs/${story.backlogId}/user_stories`, story.id);
             batch.delete(storyRef);
 
@@ -779,14 +810,18 @@ export const StoriesView = () => {
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            // Updated to gemini-3-flash-preview per guidelines for basic/general text tasks.
+            model: 'gemini-3-flash-preview',
             contents: `Generate technical tasks for this User Story in **Persian (Farsi)**.
+            The project uses **Next.js** for Frontend and **Python Django** for Backend.
+            Keep the tasks practical but not overly technical.
+            
             Story Title: ${targetStory.title}
             Story Description: ${targetStory.description}
             
             Return a list of tasks. Each task must have a title and description in Persian, and a technical stack ('Frontend' or 'Backend').`,
             config: {
-                systemInstruction: "You are an expert Agile Developer assistant. You speak Farsi. Generate output in JSON.",
+                systemInstruction: "You are an expert Agile Developer assistant specializing in Next.js (Frontend) and Python Django (Backend). You speak Farsi. Generate output in JSON.",
                 responseMimeType: "application/json",
                 responseSchema: {
                     type: Type.OBJECT,
@@ -936,7 +971,6 @@ export const StoriesView = () => {
                     </TableCell>
                     <TableCell>{story.backlogTitle}</TableCell>
                     <TableCell className="w-[150px]">
-                      {/* Only show progress if tasks are loaded, otherwise show a placeholder or points */}
                       {tasksCache[story.id] ? (
                         <div className="space-y-1">
                           <ProgressBar progress={progress} />
@@ -1110,6 +1144,7 @@ export const StoriesView = () => {
         }}
         teams={teams}
         usersList={usersList}
+        allStories={stories}
       />
     </div>
   );
@@ -1142,8 +1177,6 @@ const MilestoneDetailModal = ({ milestone, isOpen, onClose, allStories, teams, u
   if (!milestone) return null;
 
   const linkedStories = allStories.filter(s => milestone.userStoryIds?.includes(s.id));
-  
-  // Calculate weighted milestone progress
   const totalPoints = linkedStories.reduce((acc, s) => acc + (s.points || 1), 0);
   const milestoneProgress = totalPoints > 0 
     ? Math.round(linkedStories.reduce((acc, s) => acc + (storyProgressMap[s.id] || 0) * (s.points || 1), 0) / totalPoints)
@@ -1176,7 +1209,6 @@ const MilestoneDetailModal = ({ milestone, isOpen, onClose, allStories, teams, u
       <Dialog open={isOpen} onOpenChange={(v) => !v && onClose()}>
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
           <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
-             {/* Header */}
              <div className="p-6 border-b flex justify-between items-start bg-slate-50">
                 <div className="space-y-1 flex-1">
                     <div className="flex items-center gap-2 mb-2">
@@ -1199,7 +1231,6 @@ const MilestoneDetailModal = ({ milestone, isOpen, onClose, allStories, teams, u
                 <Button variant="ghost" size="icon" onClick={onClose}><X className="h-4 w-4" /></Button>
              </div>
 
-             {/* Content */}
              <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
                 <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
                     <BarChart3 className="h-5 w-5" /> Linked User Stories ({linkedStories.length})
@@ -1314,6 +1345,7 @@ const MilestoneDetailModal = ({ milestone, isOpen, onClose, allStories, teams, u
         }}
         teams={teams}
         usersList={usersList}
+        allStories={allStories}
       />
     </>
   );
@@ -1326,29 +1358,23 @@ export const MilestonesView = () => {
   const [allStories, setAllStories] = useState<(UserStory & { backlogTitle: string })[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [usersList, setUsersList] = useState<User[]>([]);
-  
-  // Progress Data
   const [storyProgressMap, setStoryProgressMap] = useState<Record<string, number>>({});
   const [loadingProgress, setLoadingProgress] = useState(false);
-
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [viewMilestone, setViewMilestone] = useState<Milestone | null>(null);
   const [selectedStoryIds, setSelectedStoryIds] = useState<string[]>([]);
   const [storySearch, setStorySearch] = useState("");
-
   const { register, handleSubmit, reset, setValue } = useForm<Milestone>();
 
   const fetchData = async () => {
     setLoadingProgress(true);
     try {
-        // Fetch Milestones
         const q = query(collection(db, "milestones"));
         const querySnapshot = await getDocs(q);
         const mData = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() } as Milestone));
         setMilestones(mData.sort((a, b) => new Date(a.endDate).getTime() - new Date(b.endDate).getTime()));
 
-        // Fetch Teams & Users
         const [tSnap, uSnap] = await Promise.all([
             getDocs(collection(db, "teams")),
             getDocs(collection(db, "users"))
@@ -1356,7 +1382,6 @@ export const MilestonesView = () => {
         setTeams(tSnap.docs.map(d => ({ id: d.id, ...d.data() } as Team)));
         setUsersList(uSnap.docs.map(d => ({ id: d.id, ...d.data() } as User)));
 
-        // Fetch All Stories
         const bSnap = await getDocs(collection(db, "product_backlogs"));
         const bls = bSnap.docs.map(d => ({ id: d.id, title: d.data().title }));
         
@@ -1371,17 +1396,14 @@ export const MilestonesView = () => {
         const storiesFlat = (await Promise.all(storiesPromises)).flat();
         setAllStories(storiesFlat);
 
-        // Fetch All Tasks to calculate story progress
         const tasksSnap = await getDocs(collection(db, "tasks"));
         const allTasks = tasksSnap.docs.map(d => d.data() as Task);
-        
         const progressMap: Record<string, number> = {};
         storiesFlat.forEach(story => {
             const storyTasks = allTasks.filter(t => t.userStoryId === story.id);
             progressMap[story.id] = calculateStoryProgress(storyTasks);
         });
         setStoryProgressMap(progressMap);
-
     } catch (e) {
         console.error("Error fetching data", e);
     } finally {
@@ -1480,7 +1502,6 @@ export const MilestonesView = () => {
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <p className="text-sm text-muted-foreground line-clamp-2">{m.description}</p>
-                        
                         <div className="space-y-2">
                             <div className="flex justify-between text-xs font-bold text-primary">
                                 <span>PROGRESS</span>
@@ -1488,17 +1509,11 @@ export const MilestonesView = () => {
                             </div>
                             <ProgressBar progress={mProgress} />
                         </div>
-
                         <div className="flex flex-col gap-2 text-xs text-muted-foreground bg-slate-50 p-2 rounded">
                             <div className="flex items-center gap-4">
                                 <div className="flex items-center gap-1"><Clock className="h-3 w-3" /> Start: {m.startDate}</div>
                                 <div className="flex items-center gap-1"><Clock className="h-3 w-3" /> End: {m.endDate}</div>
                             </div>
-                            {m.userStoryIds && m.userStoryIds.length > 0 && (
-                                <div className="flex items-center gap-1 font-medium">
-                                    <ListTodo className="h-3 w-3" /> {m.userStoryIds.length} Stories ({totalPoints} pts)
-                                </div>
-                            )}
                         </div>
                          {user?.isAdmin && (
                             <div className="absolute bottom-2 right-2 flex gap-1 rounded">
@@ -1529,7 +1544,6 @@ export const MilestonesView = () => {
                 <option value="Completed">Completed</option>
             </select>
           </div>
-          
           <div className="space-y-2">
             <Label>Linked User Stories</Label>
             <div className="relative">
@@ -1544,7 +1558,6 @@ export const MilestonesView = () => {
                 />
             </div>
             <div className="max-h-40 overflow-y-auto border rounded-md p-2 space-y-2">
-                {filteredStoriesForSearch.length === 0 && <p className="text-xs text-muted-foreground text-center py-2">No stories found</p>}
                 {filteredStoriesForSearch.map(s => (
                     <div key={s.id} className="flex items-center space-x-2 hover:bg-muted/50 p-1 rounded cursor-pointer" onClick={() => toggleStory(s.id)}>
                         <input 
@@ -1561,11 +1574,7 @@ export const MilestonesView = () => {
                     </div>
                 ))}
             </div>
-            <div className="text-xs text-muted-foreground">
-                {selectedStoryIds.length} stories selected
-            </div>
           </div>
-
           <DialogFooter><Button type="submit">{editingId ? "Update" : "Create"}</Button></DialogFooter>
         </form>
       </Dialog>
@@ -1589,6 +1598,7 @@ export const TasksView = () => {
     const [tasks, setTasks] = useState<Task[]>([]);
     const [teams, setTeams] = useState<Team[]>([]);
     const [usersList, setUsersList] = useState<User[]>([]);
+    const [allStories, setAllStories] = useState<UserStory[]>([]);
     const [selectedTask, setSelectedTask] = useState<Task | null>(null);
     const [isDetailOpen, setIsDetailOpen] = useState(false);
     
@@ -1603,14 +1613,25 @@ export const TasksView = () => {
 
     const fetchData = async () => {
         try {
-          const [tSnap, tmSnap, uSnap] = await Promise.all([
+          const [tSnap, tmSnap, uSnap, blSnap] = await Promise.all([
               getDocs(collection(db, "tasks")),
               getDocs(collection(db, "teams")),
-              getDocs(collection(db, "users"))
+              getDocs(collection(db, "users")),
+              getDocs(collection(db, "product_backlogs"))
           ]);
+
           setTasks(tSnap.docs.map(d => ({ id: d.id, ...d.data() } as Task)));
           setTeams(tmSnap.docs.map(d => ({ id: d.id, ...d.data() } as Team)));
           setUsersList(uSnap.docs.map(d => ({ id: d.id, ...d.data() } as User)));
+          
+          // Fetch all user stories for reference
+          const storiesPromises = blSnap.docs.map(async (blDoc) => {
+            const sSnap = await getDocs(collection(db, `product_backlogs/${blDoc.id}/user_stories`));
+            return sSnap.docs.map(d => ({ id: d.id, ...d.data() } as UserStory));
+          });
+          const allStoriesFlat = (await Promise.all(storiesPromises)).flat();
+          setAllStories(allStoriesFlat);
+
         } catch (error) {
           console.error(error);
         }
@@ -1773,30 +1794,49 @@ export const TasksView = () => {
                                 <span className="bg-background px-2 py-0.5 rounded-full text-xs border">{filteredTasks.filter(t => t.status === status).length}</span>
                              </div>
                              <div className="p-2 space-y-2 overflow-y-auto flex-1">
-                                {filteredTasks.filter(t => t.status === status).map(task => (
-                                    <div 
-                                        key={task.id} 
-                                        draggable
-                                        onDragStart={(e) => handleDragStart(e, task.id)}
-                                        onClick={() => { setSelectedTask(task); setIsDetailOpen(true); }}
-                                        className={`bg-background p-3 rounded border shadow-sm cursor-pointer hover:border-primary transition-all space-y-2 group ${draggedTaskId === task.id ? 'opacity-50 ring-2 ring-primary ring-offset-2' : ''}`}
-                                    >
-                                        <div className="flex justify-between items-start">
-                                            <span className="text-xs font-mono text-muted-foreground truncate">{task.stack}</span>
-                                            {task.panel && (
-                                               <Badge variant="outline" className="text-[10px] h-4 px-1">{task.panel}</Badge>
+                                {filteredTasks.filter(t => t.status === status).map(task => {
+                                    const story = allStories.find(s => s.id === task.userStoryId);
+                                    return (
+                                        <div 
+                                            key={task.id} 
+                                            draggable
+                                            onDragStart={(e) => handleDragStart(e, task.id)}
+                                            onClick={() => { setSelectedTask(task); setIsDetailOpen(true); }}
+                                            className={`bg-background p-3 rounded border shadow-sm cursor-pointer hover:border-primary transition-all space-y-2 group ${draggedTaskId === task.id ? 'opacity-50 ring-2 ring-primary ring-offset-2' : ''}`}
+                                        >
+                                            <div className="flex justify-between items-start">
+                                                <span className="text-xs font-mono text-muted-foreground truncate">{task.stack}</span>
+                                                {task.panel && (
+                                                   <Badge variant="outline" className="text-[10px] h-4 px-1">{task.panel}</Badge>
+                                                )}
+                                            </div>
+                                            
+                                            {/* Linked Story Badge & Preview on Card */}
+                                            {story && (
+                                                <div className="space-y-1">
+                                                    <div className="flex items-center gap-1 text-[10px] font-bold text-blue-600 bg-blue-50/50 px-1.5 py-0.5 rounded border border-blue-100 truncate" title={story.title}>
+                                                        <Layout className="h-2.5 w-2.5 shrink-0" />
+                                                        <span className="truncate">{story.displayId ? `${story.displayId}: ` : ''}{story.title}</span>
+                                                    </div>
+                                                    {story.description && (
+                                                        <div className="text-[10px] text-muted-foreground/80 line-clamp-1 italic px-0.5" dir="auto">
+                                                            {story.description.replace(/[#*`]/g, '')}
+                                                        </div>
+                                                    )}
+                                                </div>
                                             )}
+
+                                            <p className="text-sm font-medium line-clamp-2" dir="auto">{task.title}</p>
+                                            <div className="flex justify-between items-center pt-1">
+                                                 <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                                    <UserIcon className="h-3 w-3" />
+                                                    <span className="max-w-[80px] truncate">{usersList.find(u => u.id === task.assigneeId)?.name || 'Unassigned'}</span>
+                                                 </div>
+                                                 {task.comments && task.comments.length > 0 && <MessageSquare className="h-3 w-3 text-muted-foreground" />}
+                                            </div>
                                         </div>
-                                        <p className="text-sm font-medium line-clamp-2" dir="auto">{task.title}</p>
-                                        <div className="flex justify-between items-center pt-1">
-                                             <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                                                <UserIcon className="h-3 w-3" />
-                                                <span className="max-w-[80px] truncate">{usersList.find(u => u.id === task.assigneeId)?.name || 'Unassigned'}</span>
-                                             </div>
-                                             {task.comments && task.comments.length > 0 && <MessageSquare className="h-3 w-3 text-muted-foreground" />}
-                                        </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                              </div>
                         </div>
                     ))}
@@ -1817,6 +1857,7 @@ export const TasksView = () => {
                 }}
                 teams={teams}
                 usersList={usersList}
+                allStories={allStories}
             />
         </div>
     );
