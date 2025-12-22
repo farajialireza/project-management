@@ -1,10 +1,11 @@
+
 import React, { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { db } from '../../firebase';
 import { collection, addDoc, getDocs, doc, deleteDoc, updateDoc, writeBatch, query, where, collectionGroup } from 'firebase/firestore';
 import { Button, Table, TableHeader, TableRow, TableHead, TableBody, TableCell, Dialog, DialogHeader, DialogTitle, Input, Label, DialogFooter, Badge, Card, CardHeader, CardTitle, CardContent, Textarea } from '../ui';
-import { ProductBacklog, UserStory, Milestone, Task, Team, User, TaskComment } from '../../types';
-import { Plus, Trash2, Edit2, ChevronDown, ChevronRight, ListTodo, Sparkles, MessageSquare, History, User as UserIcon, Users as UsersIcon, Clock, Loader2, CheckCircle, Save, X, Filter, Search, Calendar, Layout, BarChart3, FileText, Info } from 'lucide-react';
+import { ProductBacklog, UserStory, Milestone, Task, Team, User, TaskComment, AssignmentHistory } from '../../types';
+import { Plus, Trash2, Edit2, ChevronDown, ChevronRight, ListTodo, Sparkles, MessageSquare, History, User as UserIcon, Users as UsersIcon, Clock, Loader2, CheckCircle, Save, X, Filter, Search, Calendar, Layout, BarChart3, FileText, Info, UserPlus, Users } from 'lucide-react';
 import { useAuth } from '../../App';
 import ReactMarkdown from 'react-markdown';
 import { GoogleGenAI, Type } from "@google/genai";
@@ -328,12 +329,42 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
     const handleSaveEdit = async () => {
         if (!user) return;
         try {
+            const now = Date.now();
+            const newAssignmentHistory: AssignmentHistory[] = [...(task.assignmentHistory || [])];
+
+            // Track Team Assignment Changes
+            if (editForm.teamId !== task.teamId) {
+                const newTeamName = editForm.teamId ? (teams.find(t => t.id === editForm.teamId)?.name || 'Unknown Team') : 'Unassigned (None)';
+                newAssignmentHistory.push({
+                    type: 'Team',
+                    assignedToId: editForm.teamId || '',
+                    assignedToName: newTeamName,
+                    assignedById: user.id,
+                    assignedByName: user.name,
+                    timestamp: now
+                });
+            }
+
+            // Track Member Assignment Changes
+            if (editForm.assigneeId !== task.assigneeId) {
+                const newMemberName = editForm.assigneeId ? (usersList.find(u => u.id === editForm.assigneeId)?.name || 'Unknown User') : 'Unassigned (None)';
+                newAssignmentHistory.push({
+                    type: 'Member',
+                    assignedToId: editForm.assigneeId || '',
+                    assignedToName: newMemberName,
+                    assignedById: user.id,
+                    assignedByName: user.name,
+                    timestamp: now
+                });
+            }
+
             const updates = {
                 ...editForm,
+                assignmentHistory: newAssignmentHistory,
                 lastEditedBy: {
                     userId: user.id,
                     userName: user.name,
-                    timestamp: Date.now()
+                    timestamp: now
                 }
             };
             await updateDoc(doc(db, "tasks", task.id), updates);
@@ -434,7 +465,6 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
                     
                     <div className="flex-1 overflow-y-auto p-0 flex flex-col md:flex-row">
                         <div className="flex-1 p-6 space-y-8 border-r">
-                             {/* TASK DESCRIPTION SECTION (MOVING TO TOP) */}
                              <div className="space-y-6">
                                 {isEditing ? (
                                     <div className="space-y-2">
@@ -459,7 +489,6 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
                                 )}
                              </div>
 
-                             {/* STORY CONTEXT BOX (MOVING BELOW DESCRIPTION) */}
                              {parentStory && (
                                 <div className="bg-blue-50/50 rounded-lg border border-blue-100 overflow-hidden">
                                    <div className="bg-blue-100/50 px-3 py-1.5 flex items-center gap-2 border-b border-blue-100">
@@ -564,6 +593,28 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
                                 )}
                             </div>
                             
+                            {/* NEW ASSIGNMENT HISTORY SECTION */}
+                            <div className="space-y-3">
+                                <span className="text-muted-foreground block text-xs uppercase font-bold tracking-tight">Assignment History</span>
+                                <div className="space-y-3">
+                                    {task.assignmentHistory?.slice().reverse().map((ah, i) => (
+                                        <div key={i} className="text-xs bg-white p-3 rounded-lg border border-slate-100 shadow-sm space-y-1 relative">
+                                            <div className="flex items-center gap-2 mb-1">
+                                                {ah.type === 'Team' ? <Users className="h-3 w-3 text-purple-600" /> : <UserPlus className="h-3 w-3 text-blue-600" />}
+                                                <span className="font-bold text-slate-800">{ah.assignedToName}</span>
+                                            </div>
+                                            <div className="flex flex-col text-[10px] text-muted-foreground">
+                                                <span className="flex items-center gap-1">Assigned by: <b>{ah.assignedByName}</b></span>
+                                                <span className="flex items-center gap-1 mt-0.5"><Clock className="h-2.5 w-2.5" /> {new Date(ah.timestamp).toLocaleString()}</span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {(!task.assignmentHistory || task.assignmentHistory.length === 0) && (
+                                        <div className="text-[10px] text-muted-foreground italic p-2 border border-dashed rounded text-center">No assignments recorded.</div>
+                                    )}
+                                </div>
+                            </div>
+
                             <div className="space-y-2">
                                 <span className="text-muted-foreground block text-xs uppercase font-bold tracking-tight">Audit</span>
                                 <div className="text-xs text-slate-600 bg-white p-3 rounded-lg border shadow-sm space-y-2">
@@ -770,6 +821,33 @@ export const StoriesView = () => {
 
   const onAddTaskSubmit = async (data: any) => {
     if (!targetStory) return;
+    const now = Date.now();
+    const assignmentHistory: AssignmentHistory[] = [];
+
+    // Track initial Team assignment
+    if (data.teamId) {
+        assignmentHistory.push({
+            type: 'Team',
+            assignedToId: data.teamId,
+            assignedToName: teams.find(t => t.id === data.teamId)?.name || 'Team',
+            assignedById: user?.id || 'system',
+            assignedByName: user?.name || 'System',
+            timestamp: now
+        });
+    }
+
+    // Track initial Member assignment
+    if (data.assigneeId) {
+        assignmentHistory.push({
+            type: 'Member',
+            assignedToId: data.assigneeId,
+            assignedToName: usersList.find(u => u.id === data.assigneeId)?.name || 'User',
+            assignedById: user?.id || 'system',
+            assignedByName: user?.name || 'System',
+            timestamp: now
+        });
+    }
+
     const newTaskData = {
         title: data.title,
         description: data.description,
@@ -780,13 +858,14 @@ export const StoriesView = () => {
         stack: data.stack,
         teamId: data.teamId || null,
         assigneeId: data.assigneeId || null,
-        createdAt: Date.now(),
+        createdAt: now,
         history: [{
             status: 'To Do',
-            timestamp: Date.now(),
+            timestamp: now,
             userId: user?.id || 'system',
             userName: user?.name || 'System'
         }],
+        assignmentHistory: assignmentHistory,
         comments: [],
         createdBy: user ? { userId: user.id, userName: user.name } : { userId: 'system', userName: 'System' }
     };
@@ -810,7 +889,6 @@ export const StoriesView = () => {
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const response = await ai.models.generateContent({
-            // Updated to gemini-3-flash-preview per guidelines for basic/general text tasks.
             model: 'gemini-3-flash-preview',
             contents: `Generate technical tasks for this User Story in **Persian (Farsi)**.
             The project uses **Next.js** for Frontend and **Python Django** for Backend.
@@ -846,6 +924,7 @@ export const StoriesView = () => {
         if (generated.tasks) {
             const batch = writeBatch(db);
             const newTasks: Task[] = [];
+            const now = Date.now();
             
             generated.tasks.forEach((t: any) => {
                 const docRef = doc(collection(db, "tasks"));
@@ -858,13 +937,14 @@ export const StoriesView = () => {
                     backlogId: targetStory.backlogId,
                     panel: targetStory.panel || 'Admin',
                     stack: t.stack,
-                    createdAt: Date.now(),
+                    createdAt: now,
                     history: [{
                         status: 'To Do',
-                        timestamp: Date.now(),
+                        timestamp: now,
                         userId: user?.id || 'ai',
                         userName: user?.name || 'AI Assistant'
                     }],
+                    assignmentHistory: [],
                     comments: [],
                     createdBy: { userId: user?.id || 'ai', userName: user?.name || 'AI Assistant' }
                 };
@@ -1149,6 +1229,9 @@ export const StoriesView = () => {
     </div>
   );
 };
+
+// ... Remaining Views (Milestone, Tasks View, etc.) should follow similarly if they use TaskDetailModal or add tasks ...
+// Since they already use TaskDetailModal, they will automatically benefit from these audit changes.
 
 // --- Milestone Detail Modal ---
 const MilestoneDetailModal = ({ milestone, isOpen, onClose, allStories, teams, usersList, storyProgressMap }: {

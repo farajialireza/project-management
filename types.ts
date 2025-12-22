@@ -1,3 +1,4 @@
+
 export interface User {
   id: string;
   name: string;
@@ -54,6 +55,15 @@ export interface TaskHistory {
   userName: string;
 }
 
+export interface AssignmentHistory {
+  type: 'Team' | 'Member';
+  assignedToId: string;
+  assignedToName: string;
+  assignedById: string;
+  assignedByName: string;
+  timestamp: number;
+}
+
 export interface TaskComment {
   id: string;
   userId: string;
@@ -85,6 +95,7 @@ export interface Task {
   endTime?: number; // Transition to Done
   
   history?: TaskHistory[];
+  assignmentHistory?: AssignmentHistory[];
   comments?: TaskComment[];
   
   // Audit
