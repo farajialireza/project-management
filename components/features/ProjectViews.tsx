@@ -695,6 +695,7 @@ export const StoriesView = () => {
 
   const [filterBacklog, setFilterBacklog] = useState<string>('All');
   const [filterPriority, setFilterPriority] = useState<string>('All');
+  const [filterPanel, setFilterPanel] = useState<string>('All');
 
   const fetchData = async () => {
     try {
@@ -979,7 +980,8 @@ export const StoriesView = () => {
   const filteredStories = stories.filter(story => {
     const matchBacklog = filterBacklog === 'All' || story.backlogId === filterBacklog;
     const matchPriority = filterPriority === 'All' || story.priority === filterPriority;
-    return matchBacklog && matchPriority;
+    const matchPanel = filterPanel === 'All' || story.panel === filterPanel;
+    return matchBacklog && matchPriority && matchPanel;
   });
 
   return (
@@ -1000,6 +1002,16 @@ export const StoriesView = () => {
                             {b.displayId ? `${b.displayId} - ` : ''}{b.title}
                         </option>
                     ))}
+                </select>
+                <div className="w-px h-4 bg-gray-200 mx-1"></div>
+                <select 
+                    className="text-sm border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer"
+                    value={filterPanel}
+                    onChange={(e) => setFilterPanel(e.target.value)}
+                >
+                    <option value="All">All Panels</option>
+                    <option value="Admin">Admin</option>
+                    <option value="Customer">Customer</option>
                 </select>
                 <div className="w-px h-4 bg-gray-200 mx-1"></div>
                 <select 
@@ -1230,718 +1242,223 @@ export const StoriesView = () => {
   );
 };
 
-// ... Remaining Views (Milestone, Tasks View, etc.) should follow similarly if they use TaskDetailModal or add tasks ...
-// Since they already use TaskDetailModal, they will automatically benefit from these audit changes.
-
-// --- Milestone Detail Modal ---
-const MilestoneDetailModal = ({ milestone, isOpen, onClose, allStories, teams, usersList, storyProgressMap }: {
-  milestone: Milestone | null;
-  isOpen: boolean;
-  onClose: () => void;
-  allStories: (UserStory & { backlogTitle?: string })[];
-  teams: Team[];
-  usersList: User[];
-  storyProgressMap: Record<string, number>;
-}) => {
-  const [tasksCache, setTasksCache] = useState<Record<string, Task[]>>({});
-  const [loadingTasks, setLoadingTasks] = useState<Record<string, boolean>>({});
-  const [expandedStoryId, setExpandedStoryId] = useState<string | null>(null);
-  
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
-  const [isTaskDetailOpen, setIsTaskDetailOpen] = useState(false);
-
-  useEffect(() => {
-    if (!isOpen) {
-      setExpandedStoryId(null);
-      setTasksCache({});
-    }
-  }, [isOpen]);
-
-  if (!milestone) return null;
-
-  const linkedStories = allStories.filter(s => milestone.userStoryIds?.includes(s.id));
-  const totalPoints = linkedStories.reduce((acc, s) => acc + (s.points || 1), 0);
-  const milestoneProgress = totalPoints > 0 
-    ? Math.round(linkedStories.reduce((acc, s) => acc + (storyProgressMap[s.id] || 0) * (s.points || 1), 0) / totalPoints)
-    : 0;
-
-  const toggleStory = async (storyId: string) => {
-    if (expandedStoryId === storyId) {
-      setExpandedStoryId(null);
-      return;
-    }
-    setExpandedStoryId(storyId);
-
-    if (!tasksCache[storyId]) {
-      setLoadingTasks(prev => ({ ...prev, [storyId]: true }));
-      try {
-        const q = query(collection(db, "tasks"), where("userStoryId", "==", storyId));
-        const snap = await getDocs(q);
-        const tasks = snap.docs.map(d => ({ id: d.id, ...d.data() } as Task));
-        setTasksCache(prev => ({ ...prev, [storyId]: tasks }));
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setLoadingTasks(prev => ({ ...prev, [storyId]: false }));
-      }
-    }
-  };
-
-  return (
-    <>
-      <Dialog open={isOpen} onOpenChange={(v) => !v && onClose()}>
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
-             <div className="p-6 border-b flex justify-between items-start bg-slate-50">
-                <div className="space-y-1 flex-1">
-                    <div className="flex items-center gap-2 mb-2">
-                        <Badge variant={milestone.status === 'Completed' ? 'default' : milestone.status === 'Active' ? 'secondary' : 'outline'}>{milestone.status}</Badge>
-                        <span className="text-sm text-muted-foreground flex items-center gap-1">
-                             <Calendar className="h-3 w-3" /> {milestone.startDate} - {milestone.endDate}
-                        </span>
-                    </div>
-                    <h2 className="text-2xl font-bold">{milestone.title}</h2>
-                    <p className="text-muted-foreground">{milestone.description}</p>
-                    
-                    <div className="pt-4 max-w-md">
-                        <div className="flex justify-between items-center text-xs mb-1 font-semibold text-primary">
-                            <span>OVERALL PROGRESS</span>
-                            <span>{milestoneProgress}%</span>
-                        </div>
-                        <ProgressBar progress={milestoneProgress} className="h-3" />
-                    </div>
-                </div>
-                <Button variant="ghost" size="icon" onClick={onClose}><X className="h-4 w-4" /></Button>
-             </div>
-
-             <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
-                <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
-                    <BarChart3 className="h-5 w-5" /> Linked User Stories ({linkedStories.length})
-                </h3>
-                
-                {linkedStories.length === 0 ? (
-                    <div className="text-center py-10 text-muted-foreground italic border-2 border-dashed rounded-lg">
-                        No stories linked to this milestone.
-                    </div>
-                ) : (
-                    <div className="space-y-3">
-                        {linkedStories.map(story => {
-                             const isExpanded = expandedStoryId === story.id;
-                             const tasks = tasksCache[story.id] || [];
-                             const isLoading = loadingTasks[story.id];
-                             const storyProgress = storyProgressMap[story.id] || 0;
-
-                             return (
-                                 <div key={story.id} className="bg-white border rounded-lg overflow-hidden shadow-sm">
-                                     <div 
-                                        className="p-4 flex items-center justify-between cursor-pointer hover:bg-slate-50 transition-colors"
-                                        onClick={() => toggleStory(story.id)}
-                                     >
-                                         <div className="flex items-center gap-3 flex-1">
-                                             {isExpanded ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
-                                             <div className="flex-1 mr-4">
-                                                 <div className="flex items-center gap-2">
-                                                     <span className="font-medium">{story.displayId ? `[${story.displayId}] ` : ''}{story.title}</span>
-                                                     <Badge variant="outline" className="text-[10px]">{story.panel}</Badge>
-                                                 </div>
-                                                 <div className="text-xs text-muted-foreground">{story.backlogTitle}</div>
-                                             </div>
-                                             <div className="w-32 hidden sm:block">
-                                                 <div className="flex justify-between items-center text-[10px] mb-1">
-                                                     <span>{storyProgress}%</span>
-                                                     <span className="opacity-50">{story.points} pts</span>
-                                                 </div>
-                                                 <ProgressBar progress={storyProgress} className="h-1.5" />
-                                             </div>
-                                         </div>
-                                         <Badge variant={story.priority === 'High' ? 'destructive' : 'secondary'} className="ml-4">{story.priority}</Badge>
-                                     </div>
-                                     
-                                     {isExpanded && (
-                                         <div className="border-t bg-slate-50 p-4 pl-12">
-                                             {isLoading ? (
-                                                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                                                     <Loader2 className="h-4 w-4 animate-spin" /> Loading tasks...
-                                                 </div>
-                                             ) : tasks.length === 0 ? (
-                                                 <p className="text-sm text-muted-foreground italic">No tasks found for this story.</p>
-                                             ) : (
-                                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                                     {tasks.map(task => (
-                                                         <div 
-                                                            key={task.id} 
-                                                            className="bg-white p-3 rounded border hover:border-primary cursor-pointer shadow-sm transition-all"
-                                                            onClick={() => { setSelectedTask(task); setIsTaskDetailOpen(true); }}
-                                                         >
-                                                             <div className="flex justify-between items-start mb-2">
-                                                                 <Badge variant="secondary" className="text-[10px]">{task.stack}</Badge>
-                                                                 <Badge variant="outline" className={`text-[10px] ${task.status === 'Done' ? 'bg-green-50 text-green-700' : ''}`}>{task.status}</Badge>
-                                                             </div>
-                                                             <p className="text-sm font-medium line-clamp-2 mb-2" dir="auto">{task.title}</p>
-                                                             <div className="flex items-center justify-between text-xs text-muted-foreground">
-                                                                 <div className="flex items-center gap-1">
-                                                                     <UserIcon className="h-3 w-3" />
-                                                                     {usersList.find(u => u.id === task.assigneeId)?.name || 'Unassigned'}
-                                                                 </div>
-                                                             </div>
-                                                         </div>
-                                                     ))}
-                                                 </div>
-                                             )}
-                                         </div>
-                                     )}
-                                 </div>
-                             )
-                        })}
-                    </div>
-                )}
-             </div>
-          </div>
-        </div>
-      </Dialog>
-
-      <TaskDetailModal 
-        task={selectedTask} 
-        isOpen={isTaskDetailOpen} 
-        onClose={() => setIsTaskDetailOpen(false)} 
-        onUpdate={(updated) => {
-            setSelectedTask(updated);
-            setTasksCache(prev => {
-                const storyId = updated.userStoryId;
-                const list = prev[storyId] || [];
-                return {
-                    ...prev,
-                    [storyId]: list.map(t => t.id === updated.id ? updated : t)
-                };
-            });
-        }}
-        onDelete={(id) => {
-             setTasksCache(prev => {
-                 if (!selectedTask) return prev;
-                 const storyId = selectedTask.userStoryId;
-                 return {
-                     ...prev,
-                     [storyId]: (prev[storyId] || []).filter(t => t.id !== id)
-                 };
-             });
-             setIsTaskDetailOpen(false);
-        }}
-        teams={teams}
-        usersList={usersList}
-        allStories={allStories}
-      />
-    </>
-  );
-};
-
 // --- Milestones View ---
 export const MilestonesView = () => {
   const { user } = useAuth();
   const [milestones, setMilestones] = useState<Milestone[]>([]);
-  const [allStories, setAllStories] = useState<(UserStory & { backlogTitle: string })[]>([]);
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [usersList, setUsersList] = useState<User[]>([]);
-  const [storyProgressMap, setStoryProgressMap] = useState<Record<string, number>>({});
-  const [loadingProgress, setLoadingProgress] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [viewMilestone, setViewMilestone] = useState<Milestone | null>(null);
-  const [selectedStoryIds, setSelectedStoryIds] = useState<string[]>([]);
-  const [storySearch, setStorySearch] = useState("");
   const { register, handleSubmit, reset, setValue } = useForm<Milestone>();
 
-  const fetchData = async () => {
-    setLoadingProgress(true);
+  const fetchMilestones = async () => {
     try {
-        const q = query(collection(db, "milestones"));
-        const querySnapshot = await getDocs(q);
-        const mData = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() } as Milestone));
-        setMilestones(mData.sort((a, b) => new Date(a.endDate).getTime() - new Date(b.endDate).getTime()));
-
-        const [tSnap, uSnap] = await Promise.all([
-            getDocs(collection(db, "teams")),
-            getDocs(collection(db, "users"))
-        ]);
-        setTeams(tSnap.docs.map(d => ({ id: d.id, ...d.data() } as Team)));
-        setUsersList(uSnap.docs.map(d => ({ id: d.id, ...d.data() } as User)));
-
-        const bSnap = await getDocs(collection(db, "product_backlogs"));
-        const bls = bSnap.docs.map(d => ({ id: d.id, title: d.data().title }));
-        
-        const storiesPromises = bls.map(async (bl) => {
-            const sSnap = await getDocs(collection(db, `product_backlogs/${bl.id}/user_stories`));
-            return sSnap.docs.map(d => ({ 
-                id: d.id, 
-                ...d.data(), 
-                backlogTitle: bl.title 
-            } as UserStory & { backlogTitle: string }));
-        });
-        const storiesFlat = (await Promise.all(storiesPromises)).flat();
-        setAllStories(storiesFlat);
-
-        const tasksSnap = await getDocs(collection(db, "tasks"));
-        const allTasks = tasksSnap.docs.map(d => d.data() as Task);
-        const progressMap: Record<string, number> = {};
-        storiesFlat.forEach(story => {
-            const storyTasks = allTasks.filter(t => t.userStoryId === story.id);
-            progressMap[story.id] = calculateStoryProgress(storyTasks);
-        });
-        setStoryProgressMap(progressMap);
-    } catch (e) {
-        console.error("Error fetching data", e);
-    } finally {
-        setLoadingProgress(false);
+      const snap = await getDocs(collection(db, "milestones"));
+      setMilestones(snap.docs.map(d => ({ id: d.id, ...d.data() } as Milestone)));
+    } catch (error) {
+      console.error("Error fetching milestones:", error);
     }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchMilestones(); }, []);
 
-  const onDelete = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (confirm("آیا مایل‌ستون را حذف می‌کنید؟")) {
-      await deleteDoc(doc(db, "milestones", id));
-      fetchData();
+  const onSubmit = async (data: any) => {
+    try {
+      if (editingId) {
+        await updateDoc(doc(db, "milestones", editingId), data);
+      } else {
+        await addDoc(collection(db, "milestones"), data);
+      }
+      setIsDialogOpen(false);
+      reset();
+      setEditingId(null);
+      fetchMilestones();
+    } catch (error) {
+      console.error("Error saving milestone:", error);
+      alert("Failed to save milestone.");
     }
   };
 
-  const onEdit = (m: Milestone, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const onEdit = (m: Milestone) => {
     setEditingId(m.id);
     setValue('title', m.title);
     setValue('description', m.description);
     setValue('startDate', m.startDate);
     setValue('endDate', m.endDate);
     setValue('status', m.status);
-    setSelectedStoryIds(m.userStoryIds || []);
-    setStorySearch("");
     setIsDialogOpen(true);
   };
 
-  const onSubmit = async (data: any) => {
-    const payload = { ...data, userStoryIds: selectedStoryIds };
-    try {
-      if (editingId) {
-        await updateDoc(doc(db, "milestones", editingId), payload);
-      } else {
-        await addDoc(collection(db, "milestones"), payload);
-      }
-      setIsDialogOpen(false);
-      reset();
-      setEditingId(null);
-      setSelectedStoryIds([]);
-      setStorySearch("");
-      fetchData();
-    } catch (error) {
-      console.error(error);
+  const onDelete = async (id: string) => {
+    if(confirm('Delete milestone?')) {
+        try {
+          await deleteDoc(doc(db, "milestones", id));
+          fetchMilestones();
+        } catch (error) {
+          console.error("Delete failed:", error);
+        }
     }
   };
-
-  const toggleStory = (sid: string) => {
-      if (selectedStoryIds.includes(sid)) {
-          setSelectedStoryIds(selectedStoryIds.filter(id => id !== sid));
-      } else {
-          setSelectedStoryIds([...selectedStoryIds, sid]);
-      }
-  };
-
-  const filteredStoriesForSearch = allStories.filter(s => 
-      s.title.toLowerCase().includes(storySearch.toLowerCase()) || 
-      (s.displayId && s.displayId.toLowerCase().includes(storySearch.toLowerCase()))
-  );
 
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold tracking-tight">Milestones</h2>
-        <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={fetchData} disabled={loadingProgress}>
-                {loadingProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <BarChart3 className="mr-2 h-4 w-4" />}
-                Recalculate Progress
-            </Button>
-            {user?.isAdmin && <Button onClick={() => { setEditingId(null); setSelectedStoryIds([]); setStorySearch(""); reset(); setIsDialogOpen(true); }}><Plus className="mr-2 h-4 w-4" /> Add Milestone</Button>}
-        </div>
+        {user?.isAdmin && <Button onClick={() => { setEditingId(null); reset(); setIsDialogOpen(true); }}><Plus className="mr-2 h-4 w-4" /> Add Milestone</Button>}
       </div>
-      
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {milestones.map(m => {
-            const linkedStories = allStories.filter(s => m.userStoryIds?.includes(s.id));
-            const totalPoints = linkedStories.reduce((acc, s) => acc + (s.points || 1), 0);
-            const mProgress = totalPoints > 0 
-                ? Math.round(linkedStories.reduce((acc, s) => acc + (storyProgressMap[s.id] || 0) * (s.points || 1), 0) / totalPoints)
-                : 0;
+      <Card>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Title</TableHead>
+              <TableHead>Dates</TableHead>
+              <TableHead>Status</TableHead>
+              {user?.isAdmin && <TableHead className="w-[100px]">Actions</TableHead>}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {milestones.map(m => (
+              <TableRow key={m.id}>
+                <TableCell className="font-medium">{m.title}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">{m.startDate} - {m.endDate}</TableCell>
+                <TableCell><Badge>{m.status}</Badge></TableCell>
+                {user?.isAdmin && (
+                  <TableCell>
+                    <div className="flex space-x-2">
+                      <Button variant="ghost" size="icon" onClick={() => onEdit(m)}><Edit2 className="h-4 w-4"/></Button>
+                      <Button variant="ghost" size="icon" className="text-destructive" onClick={() => onDelete(m.id)}><Trash2 className="h-4 w-4"/></Button>
+                    </div>
+                  </TableCell>
+                )}
+              </TableRow>
+            ))}
+            {milestones.length === 0 && <TableRow><TableCell colSpan={4} className="text-center py-8 text-muted-foreground italic">No milestones found.</TableCell></TableRow>}
+          </TableBody>
+        </Table>
+      </Card>
 
-            return (
-                <Card 
-                    key={m.id} 
-                    className="relative cursor-pointer hover:border-primary transition-all hover:shadow-md border-t-4"
-                    style={{ borderTopColor: m.status === 'Completed' ? '#22c55e' : m.status === 'Active' ? '#2563eb' : '#94a3b8' }}
-                    onClick={() => setViewMilestone(m)}
-                >
-                    <CardHeader className="pb-2">
-                        <div className="flex justify-between items-start">
-                            <CardTitle className="text-lg">{m.title}</CardTitle>
-                            <Badge variant={m.status === 'Completed' ? 'default' : m.status === 'Active' ? 'secondary' : 'outline'}>{m.status}</Badge>
-                        </div>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        <p className="text-sm text-muted-foreground line-clamp-2">{m.description}</p>
-                        <div className="space-y-2">
-                            <div className="flex justify-between text-xs font-bold text-primary">
-                                <span>PROGRESS</span>
-                                <span>{mProgress}%</span>
-                            </div>
-                            <ProgressBar progress={mProgress} />
-                        </div>
-                        <div className="flex flex-col gap-2 text-xs text-muted-foreground bg-slate-50 p-2 rounded">
-                            <div className="flex items-center gap-4">
-                                <div className="flex items-center gap-1"><Clock className="h-3 w-3" /> Start: {m.startDate}</div>
-                                <div className="flex items-center gap-1"><Clock className="h-3 w-3" /> End: {m.endDate}</div>
-                            </div>
-                        </div>
-                         {user?.isAdmin && (
-                            <div className="absolute bottom-2 right-2 flex gap-1 rounded">
-                               <Button variant="ghost" size="icon" className="h-6 w-6" onClick={(e) => onEdit(m, e)}><Edit2 className="h-3 w-3" /></Button>
-                               <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={(e) => onDelete(m.id, e)}><Trash2 className="h-3 w-3" /></Button>
-                            </div>
-                         )}
-                    </CardContent>
-                </Card>
-            )
-        })}
-      </div>
-
-       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogHeader><DialogTitle>{editingId ? "Edit" : "Create"} Milestone</DialogTitle></DialogHeader>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 py-4">
-          <div className="space-y-2"><Label>Title</Label><Input {...register('title', { required: true })} /></div>
-          <div className="space-y-2"><Label>Description</Label><Input {...register('description')} /></div>
+          <div className="space-y-2"><Label>Title</Label><Input {...register('title', {required: true})} /></div>
+          <div className="space-y-2"><Label>Description</Label><Textarea {...register('description')} /></div>
           <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2"><Label>Start Date</Label><Input type="date" {...register('startDate')} /></div>
-              <div className="space-y-2"><Label>End Date</Label><Input type="date" {...register('endDate')} /></div>
+            <div className="space-y-2"><Label>Start Date</Label><Input type="date" {...register('startDate')} /></div>
+            <div className="space-y-2"><Label>End Date</Label><Input type="date" {...register('endDate')} /></div>
           </div>
           <div className="space-y-2">
             <Label>Status</Label>
             <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...register('status')}>
-                <option value="Planned">Planned</option>
-                <option value="Active">Active</option>
-                <option value="Completed">Completed</option>
+              <option value="Planned">Planned</option>
+              <option value="Active">Active</option>
+              <option value="Completed">Completed</option>
             </select>
           </div>
-          <div className="space-y-2">
-            <Label>Linked User Stories</Label>
-            <div className="relative">
-                <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                    <Search className="h-4 w-4 text-gray-400" />
-                </div>
-                <Input 
-                    placeholder="Search stories..." 
-                    className="pl-10" 
-                    value={storySearch} 
-                    onChange={e => setStorySearch(e.target.value)} 
-                />
-            </div>
-            <div className="max-h-40 overflow-y-auto border rounded-md p-2 space-y-2">
-                {filteredStoriesForSearch.map(s => (
-                    <div key={s.id} className="flex items-center space-x-2 hover:bg-muted/50 p-1 rounded cursor-pointer" onClick={() => toggleStory(s.id)}>
-                        <input 
-                            type="checkbox" 
-                            className="h-4 w-4 rounded border-gray-300 pointer-events-none"
-                            checked={selectedStoryIds.includes(s.id)}
-                            readOnly
-                        />
-                        <div className="flex flex-col overflow-hidden flex-1">
-                            <span className="text-sm font-medium truncate">{s.displayId ? `[${s.displayId}] ` : ''}{s.title}</span>
-                            <span className="text-xs text-muted-foreground truncate">{s.backlogTitle}</span>
-                        </div>
-                        <Badge variant="outline" className="text-[10px]">{s.points} pts</Badge>
-                    </div>
-                ))}
-            </div>
-          </div>
-          <DialogFooter><Button type="submit">{editingId ? "Update" : "Create"}</Button></DialogFooter>
+          <DialogFooter><Button type="submit">Save</Button></DialogFooter>
         </form>
       </Dialog>
-      
-      <MilestoneDetailModal 
-          milestone={viewMilestone}
-          isOpen={!!viewMilestone}
-          onClose={() => setViewMilestone(null)}
-          allStories={allStories}
-          teams={teams}
-          usersList={usersList}
-          storyProgressMap={storyProgressMap}
-      />
     </div>
   );
 };
 
-// --- Tasks View (Kanban) ---
+// --- Tasks View ---
 export const TasksView = () => {
-    const { user } = useAuth();
-    const [tasks, setTasks] = useState<Task[]>([]);
-    const [teams, setTeams] = useState<Team[]>([]);
-    const [usersList, setUsersList] = useState<User[]>([]);
-    const [allStories, setAllStories] = useState<UserStory[]>([]);
-    const [selectedTask, setSelectedTask] = useState<Task | null>(null);
-    const [isDetailOpen, setIsDetailOpen] = useState(false);
-    
-    // Filters
-    const [filterSelf, setFilterSelf] = useState(false);
-    const [filterStack, setFilterStack] = useState<string>('All');
-    const [filterPanel, setFilterPanel] = useState<string>('All');
-    const [filterTeam, setFilterTeam] = useState<string>('All');
-    const [filterAssignee, setFilterAssignee] = useState<string>('All');
-    
-    const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [isTaskDetailOpen, setIsTaskDetailOpen] = useState(false);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [usersList, setUsersList] = useState<User[]>([]);
+  const [allStories, setAllStories] = useState<UserStory[]>([]);
 
-    const fetchData = async () => {
-        try {
-          const [tSnap, tmSnap, uSnap, blSnap] = await Promise.all([
-              getDocs(collection(db, "tasks")),
-              getDocs(collection(db, "teams")),
-              getDocs(collection(db, "users")),
-              getDocs(collection(db, "product_backlogs"))
-          ]);
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const [tasksSnap, teamsSnap, usersSnap] = await Promise.all([
+        getDocs(collection(db, "tasks")),
+        getDocs(collection(db, "teams")),
+        getDocs(collection(db, "users"))
+      ]);
 
-          setTasks(tSnap.docs.map(d => ({ id: d.id, ...d.data() } as Task)));
-          setTeams(tmSnap.docs.map(d => ({ id: d.id, ...d.data() } as Team)));
-          setUsersList(uSnap.docs.map(d => ({ id: d.id, ...d.data() } as User)));
-          
-          // Fetch all user stories for reference
-          const storiesPromises = blSnap.docs.map(async (blDoc) => {
-            const sSnap = await getDocs(collection(db, `product_backlogs/${blDoc.id}/user_stories`));
-            return sSnap.docs.map(d => ({ id: d.id, ...d.data() } as UserStory));
-          });
-          const allStoriesFlat = (await Promise.all(storiesPromises)).flat();
-          setAllStories(allStoriesFlat);
+      setTasks(tasksSnap.docs.map(d => ({ id: d.id, ...d.data() } as Task)));
+      setTeams(teamsSnap.docs.map(d => ({ id: d.id, ...d.data() } as Team)));
+      setUsersList(usersSnap.docs.map(d => ({ id: d.id, ...d.data() } as User)));
+      
+      const blSnap = await getDocs(collection(db, "product_backlogs"));
+      const storyPromises = blSnap.docs.map(async (bl) => {
+          const snap = await getDocs(collection(db, `product_backlogs/${bl.id}/user_stories`));
+          return snap.docs.map(d => ({
+              id: d.id,
+              backlogId: bl.id,
+              ...d.data()
+          } as UserStory));
+      });
 
-        } catch (error) {
-          console.error(error);
-        }
-    };
+      const storiesArrays = await Promise.all(storyPromises);
+      setAllStories(storiesArrays.flat());
+    } catch (e) {
+      console.error("Error fetching tasks view data", e);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchData(); }, []);
 
-    const COLUMNS: Task['status'][] = ['To Do', 'In Progress', 'Testing', 'Review', 'Done'];
-
-    const handleDragStart = (e: React.DragEvent, taskId: string) => {
-        setDraggedTaskId(taskId);
-        e.dataTransfer.effectAllowed = 'move';
-    };
-
-    const handleDragOver = (e: React.DragEvent) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-    };
-
-    const handleDrop = async (e: React.DragEvent, newStatus: Task['status']) => {
-        e.preventDefault();
-        if (!draggedTaskId || !user) return;
-
-        const task = tasks.find(t => t.id === draggedTaskId);
-        if (!task || task.status === newStatus) {
-            setDraggedTaskId(null);
-            return;
-        }
-
-        const updatedTask = { ...task, status: newStatus };
-        setTasks(prev => prev.map(t => t.id === draggedTaskId ? updatedTask : t));
-        setDraggedTaskId(null);
-
-        const now = Date.now();
-        const updates: any = { 
-            status: newStatus,
-            history: [...(task.history || []), { status: newStatus, timestamp: now, userId: user.id, userName: user.name }]
-        };
-
-        if (newStatus === 'In Progress' && !task.startTime) updates.startTime = now;
-        if (newStatus === 'Done') updates.endTime = now;
-        if (task.status === 'Done' && newStatus !== 'Done') updates.endTime = null;
-
-        try {
-            await updateDoc(doc(db, "tasks", task.id), updates);
-        } catch (error) {
-            console.error("Failed to update task status:", error);
-            fetchData();
-        }
-    };
-
-    const filteredTasks = tasks.filter(t => {
-        const matchStack = filterStack === 'All' || t.stack === filterStack;
-        const matchPanel = filterPanel === 'All' || t.panel === filterPanel;
-        
-        let mTeam = true;
-        if (filterTeam === 'All') mTeam = true;
-        else if (filterTeam === 'No Team') mTeam = !t.teamId;
-        else mTeam = t.teamId === filterTeam;
-
-        let mAssignee = true;
-        if (filterSelf && user) {
-            mAssignee = t.assigneeId === user.id;
-        } else {
-             if (filterAssignee === 'All') mAssignee = true;
-             else if (filterAssignee === 'Unassigned') mAssignee = !t.assigneeId;
-             else mAssignee = t.assigneeId === filterAssignee;
-        }
-        
-        return matchStack && matchPanel && mTeam && mAssignee;
-    });
-
-    return (
-        <div className="h-[calc(100vh-140px)] flex flex-col space-y-4">
-             <div className="flex flex-col space-y-4">
-                <div className="flex justify-between items-center">
-                    <h2 className="text-2xl font-bold tracking-tight">Task Board</h2>
-                    <Button variant="outline" size="sm" onClick={fetchData}><History className="mr-2 h-4 w-4" /> Refresh</Button>
-                </div>
-                
-                <div className="flex flex-wrap items-center gap-2 bg-white p-2 rounded-md border shadow-sm">
-                    <Filter className="h-4 w-4 text-muted-foreground mr-2" />
-                    
-                    <select 
-                        className="text-sm border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer"
-                        value={filterStack}
-                        onChange={(e) => setFilterStack(e.target.value)}
-                    >
-                        <option value="All">All Stacks</option>
-                        <option value="Frontend">Frontend</option>
-                        <option value="Backend">Backend</option>
-                    </select>
-                    <div className="w-px h-4 bg-gray-200 mx-1"></div>
-
-                    <select 
-                        className="text-sm border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer"
-                        value={filterPanel}
-                        onChange={(e) => setFilterPanel(e.target.value)}
-                    >
-                        <option value="All">All Panels</option>
-                        <option value="Admin">Admin</option>
-                        <option value="Customer">Customer</option>
-                    </select>
-                    <div className="w-px h-4 bg-gray-200 mx-1"></div>
-
-                    <select 
-                        className="text-sm border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer max-w-[150px] truncate"
-                        value={filterTeam}
-                        onChange={(e) => setFilterTeam(e.target.value)}
-                    >
-                        <option value="All">All Teams</option>
-                        <option value="No Team">No Team</option>
-                        {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                    </select>
-                    <div className="w-px h-4 bg-gray-200 mx-1"></div>
-
-                    <select 
-                        className="text-sm border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer max-w-[150px] truncate disabled:opacity-50"
-                        value={filterAssignee}
-                        onChange={(e) => {
-                            setFilterAssignee(e.target.value);
-                            setFilterSelf(false);
-                        }}
-                        disabled={filterSelf}
-                    >
-                        <option value="All">All Members</option>
-                        <option value="Unassigned">Unassigned</option>
-                        {usersList.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                    </select>
-
-                    <div className="w-px h-4 bg-gray-200 mx-1"></div>
-                    
-                     <div className="flex items-center space-x-2">
-                        <input 
-                            id="my-tasks" 
-                            type="checkbox" 
-                            checked={filterSelf} 
-                            onChange={e => {
-                                setFilterSelf(e.target.checked);
-                                if(e.target.checked) setFilterAssignee('All');
-                            }} 
-                            className="h-4 w-4" 
-                        />
-                        <Label htmlFor="my-tasks" className="cursor-pointer text-xs">My Tasks Only</Label>
-                    </div>
-                </div>
-            </div>
-
-            <div className="flex-1 overflow-x-auto overflow-y-hidden">
-                <div className="flex h-full gap-4 min-w-[1000px] pb-4">
-                    {COLUMNS.map(status => (
-                        <div 
-                            key={status} 
-                            className={`flex-1 min-w-[280px] bg-muted/30 rounded-lg flex flex-col max-h-full transition-colors ${draggedTaskId ? 'border-2 border-dashed border-transparent hover:border-primary/20' : ''}`}
-                            onDragOver={handleDragOver}
-                            onDrop={(e) => handleDrop(e, status)}
-                        >
-                             <div className="p-3 font-semibold text-sm text-muted-foreground flex justify-between items-center bg-muted/50 rounded-t-lg select-none">
-                                {status}
-                                <span className="bg-background px-2 py-0.5 rounded-full text-xs border">{filteredTasks.filter(t => t.status === status).length}</span>
-                             </div>
-                             <div className="p-2 space-y-2 overflow-y-auto flex-1">
-                                {filteredTasks.filter(t => t.status === status).map(task => {
-                                    const story = allStories.find(s => s.id === task.userStoryId);
-                                    return (
-                                        <div 
-                                            key={task.id} 
-                                            draggable
-                                            onDragStart={(e) => handleDragStart(e, task.id)}
-                                            onClick={() => { setSelectedTask(task); setIsDetailOpen(true); }}
-                                            className={`bg-background p-3 rounded border shadow-sm cursor-pointer hover:border-primary transition-all space-y-2 group ${draggedTaskId === task.id ? 'opacity-50 ring-2 ring-primary ring-offset-2' : ''}`}
-                                        >
-                                            <div className="flex justify-between items-start">
-                                                <span className="text-xs font-mono text-muted-foreground truncate">{task.stack}</span>
-                                                {task.panel && (
-                                                   <Badge variant="outline" className="text-[10px] h-4 px-1">{task.panel}</Badge>
-                                                )}
-                                            </div>
-                                            
-                                            {/* Linked Story Badge & Preview on Card */}
-                                            {story && (
-                                                <div className="space-y-1">
-                                                    <div className="flex items-center gap-1 text-[10px] font-bold text-blue-600 bg-blue-50/50 px-1.5 py-0.5 rounded border border-blue-100 truncate" title={story.title}>
-                                                        <Layout className="h-2.5 w-2.5 shrink-0" />
-                                                        <span className="truncate">{story.displayId ? `${story.displayId}: ` : ''}{story.title}</span>
-                                                    </div>
-                                                    {story.description && (
-                                                        <div className="text-[10px] text-muted-foreground/80 line-clamp-1 italic px-0.5" dir="auto">
-                                                            {story.description.replace(/[#*`]/g, '')}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            )}
-
-                                            <p className="text-sm font-medium line-clamp-2" dir="auto">{task.title}</p>
-                                            <div className="flex justify-between items-center pt-1">
-                                                 <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                                                    <UserIcon className="h-3 w-3" />
-                                                    <span className="max-w-[80px] truncate">{usersList.find(u => u.id === task.assigneeId)?.name || 'Unassigned'}</span>
-                                                 </div>
-                                                 {task.comments && task.comments.length > 0 && <MessageSquare className="h-3 w-3 text-muted-foreground" />}
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                             </div>
-                        </div>
-                    ))}
-                </div>
-            </div>
-
-            <TaskDetailModal 
-                task={selectedTask} 
-                isOpen={isDetailOpen} 
-                onClose={() => setIsDetailOpen(false)} 
-                onUpdate={(updated) => {
-                    setTasks(prev => prev.map(t => t.id === updated.id ? updated : t));
-                    setSelectedTask(updated);
-                }}
-                onDelete={(id) => {
-                    setTasks(prev => prev.filter(t => t.id !== id));
-                    setIsDetailOpen(false);
-                }}
-                teams={teams}
-                usersList={usersList}
-                allStories={allStories}
-            />
-        </div>
-    );
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h2 className="text-2xl font-bold tracking-tight">All Tasks</h2>
+      </div>
+      <Card>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Title</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Stack</TableHead>
+              <TableHead>Assignee</TableHead>
+              <TableHead>Panel</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+                <TableRow><TableCell colSpan={5} className="text-center py-8"><Loader2 className="h-6 w-6 animate-spin mx-auto" /></TableCell></TableRow>
+            ) : tasks.length === 0 ? (
+                <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground italic">No tasks found.</TableCell></TableRow>
+            ) : tasks.map(task => (
+                <TableRow key={task.id} className="cursor-pointer hover:bg-muted/50" onClick={() => { setSelectedTask(task); setIsTaskDetailOpen(true); }}>
+                  <TableCell className="font-medium">{task.title}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className={task.status === 'Done' ? 'bg-green-50 text-green-700 border-green-200' : ''}>
+                      {task.status}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>{task.stack}</TableCell>
+                  <TableCell>{usersList.find(u => u.id === task.assigneeId)?.name || 'Unassigned'}</TableCell>
+                  <TableCell><Badge variant="secondary">{task.panel}</Badge></TableCell>
+                </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </Card>
+      {selectedTask && (
+          <TaskDetailModal 
+            task={selectedTask} 
+            isOpen={isTaskDetailOpen} 
+            onClose={() => setIsTaskDetailOpen(false)} 
+            onUpdate={(updated) => {
+                setTasks(prev => prev.map(t => t.id === updated.id ? updated : t));
+                setSelectedTask(updated);
+            }}
+            onDelete={(id) => {
+                setTasks(prev => prev.filter(t => t.id !== id));
+                setIsTaskDetailOpen(false);
+            }}
+            teams={teams}
+            usersList={usersList}
+            allStories={allStories}
+          />
+      )}
+    </div>
+  );
 };
