@@ -1149,7 +1149,7 @@ export const StoriesView = () => {
              <div className="space-y-2"><Label>Role</Label><Input {...regStory('role')} /></div>
           </div>
           <div className="space-y-2"><Label>Title</Label><Input {...regStory('title', { required: true })} /></div>
-          <div className="space-y-2"><Label>Description</Label><Input {...regStory('description')} /></div>
+          <div className="space-y-2"><Label>Description</Label><Textarea {...regStory('description')} className="min-h-[150px]" /></div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Priority</Label>
@@ -1613,6 +1613,7 @@ export const TasksView = () => {
             }}
             teams={teams}
             usersList={usersList}
+            // Fix: correctly reference the 'allStories' state variable instead of undefined 'stories'
             allStories={allStories}
           />
       )}
