@@ -5,7 +5,7 @@ import { db } from '../../firebase';
 import { collection, addDoc, getDocs, doc, deleteDoc, updateDoc, writeBatch, query, where, collectionGroup } from 'firebase/firestore';
 import { Button, Table, TableHeader, TableRow, TableHead, TableBody, TableCell, Dialog, DialogHeader, DialogTitle, Input, Label, DialogFooter, Badge, Card, CardHeader, CardTitle, CardContent, Textarea } from '../ui';
 import { ProductBacklog, UserStory, Milestone, Task, Team, User, TaskComment, AssignmentHistory } from '../../types';
-import { Plus, Trash2, Edit2, ChevronDown, ChevronRight, ListTodo, Sparkles, MessageSquare, History, User as UserIcon, Users as UsersIcon, Clock, Loader2, CheckCircle, Save, X, Filter, Search, Calendar, Layout, BarChart3, FileText, Info, UserPlus, Users } from 'lucide-react';
+import { Plus, Trash2, Edit2, ChevronDown, ChevronRight, ListTodo, Sparkles, MessageSquare, History, User as UserIcon, Users as UsersIcon, Clock, Loader2, CheckCircle, Save, X, Filter, Search, Calendar, Layout, BarChart3, FileText, Info, UserPlus, Users, GripVertical } from 'lucide-react';
 import { useAuth } from '../../App';
 import ReactMarkdown from 'react-markdown';
 import { GoogleGenAI, Type } from "@google/genai";
@@ -1362,6 +1362,7 @@ export const MilestonesView = () => {
 
 // --- Tasks View ---
 export const TasksView = () => {
+  const { user } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
@@ -1376,6 +1377,8 @@ export const TasksView = () => {
   const [filterStatus, setFilterStatus] = useState<string>('All');
   const [filterAssignee, setFilterAssignee] = useState<string>('All');
   const [filterPanel, setFilterPanel] = useState<string>('All');
+
+  const STATUSES: Task['status'][] = ['To Do', 'In Progress', 'Testing', 'Review', 'Done'];
 
   const fetchData = async () => {
     setLoading(true);
@@ -1411,6 +1414,42 @@ export const TasksView = () => {
 
   useEffect(() => { fetchData(); }, []);
 
+  const handleDragStart = (e: React.DragEvent, taskId: string) => {
+    e.dataTransfer.setData('taskId', taskId);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = async (e: React.DragEvent, newStatus: Task['status']) => {
+    e.preventDefault();
+    const taskId = e.dataTransfer.getData('taskId');
+    const taskToUpdate = tasks.find(t => t.id === taskId);
+    
+    if (taskToUpdate && taskToUpdate.status !== newStatus && user) {
+        // Optimistic UI Update
+        const oldStatus = taskToUpdate.status;
+        setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus } : t));
+
+        try {
+            const now = Date.now();
+            const updates: any = { 
+                status: newStatus,
+                history: [...(taskToUpdate.history || []), { status: newStatus, timestamp: now, userId: user.id, userName: user.name }]
+            };
+            if (newStatus === 'In Progress' && !taskToUpdate.startTime) updates.startTime = now;
+            if (newStatus === 'Done') updates.endTime = now;
+            
+            await updateDoc(doc(db, "tasks", taskId), updates);
+        } catch (error) {
+            console.error("Drop update failed", error);
+            // Revert on error
+            setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: oldStatus } : t));
+        }
+    }
+  };
+
   const filteredTasks = tasks.filter(task => {
       const matchTeam = filterTeam === 'All' || task.teamId === filterTeam;
       const matchStack = filterStack === 'All' || task.stack === filterStack;
@@ -1421,16 +1460,15 @@ export const TasksView = () => {
   });
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h2 className="text-2xl font-bold tracking-tight">All Tasks</h2>
+    <div className="space-y-4 h-[calc(100vh-180px)] flex flex-col">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 flex-shrink-0">
+        <h2 className="text-2xl font-bold tracking-tight">Project Board</h2>
         
         {/* Advanced Filters */}
         <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-2 bg-white border rounded-md px-2 py-1 shadow-sm overflow-x-auto max-w-full">
                 <Filter className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                 
-                {/* Team Filter */}
                 <select 
                     className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer min-w-[80px]"
                     value={filterTeam}
@@ -1442,7 +1480,6 @@ export const TasksView = () => {
                 
                 <div className="w-px h-4 bg-gray-200 mx-1 flex-shrink-0"></div>
 
-                {/* Stack Filter */}
                 <select 
                     className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer"
                     value={filterStack}
@@ -1455,19 +1492,6 @@ export const TasksView = () => {
 
                 <div className="w-px h-4 bg-gray-200 mx-1 flex-shrink-0"></div>
 
-                {/* Status Filter */}
-                <select 
-                    className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer"
-                    value={filterStatus}
-                    onChange={(e) => setFilterStatus(e.target.value)}
-                >
-                    <option value="All">All Statuses</option>
-                    {['To Do', 'In Progress', 'Testing', 'Review', 'Done'].map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-
-                <div className="w-px h-4 bg-gray-200 mx-1 flex-shrink-0"></div>
-
-                {/* Person Filter */}
                 <select 
                     className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer min-w-[100px]"
                     value={filterAssignee}
@@ -1479,7 +1503,6 @@ export const TasksView = () => {
 
                 <div className="w-px h-4 bg-gray-200 mx-1 flex-shrink-0"></div>
 
-                {/* Panel Filter */}
                 <select 
                     className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer"
                     value={filterPanel}
@@ -1503,47 +1526,78 @@ export const TasksView = () => {
         </div>
       </div>
 
-      <Card>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Title</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Stack</TableHead>
-              <TableHead>Assignee</TableHead>
-              <TableHead>Team</TableHead>
-              <TableHead>Panel</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-                <TableRow><TableCell colSpan={6} className="text-center py-8"><Loader2 className="h-6 w-6 animate-spin mx-auto" /></TableCell></TableRow>
-            ) : filteredTasks.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground italic">No tasks match the selected filters.</TableCell></TableRow>
-            ) : filteredTasks.map(task => (
-                <TableRow key={task.id} className="cursor-pointer hover:bg-muted/50" onClick={() => { setSelectedTask(task); setIsTaskDetailOpen(true); }}>
-                  <TableCell className="font-medium">
-                      <div>{task.title}</div>
-                      <div className="text-[10px] text-muted-foreground truncate max-w-[200px]">
-                        {allStories.find(s => s.id === task.userStoryId)?.title || ''}
-                      </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className={`text-[10px] ${task.status === 'Done' ? 'bg-green-50 text-green-700 border-green-200' : task.status === 'In Progress' ? 'bg-blue-50 text-blue-700 border-blue-200' : ''}`}>
-                      {task.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                      <Badge variant="secondary" className="text-[10px] font-normal">{task.stack}</Badge>
-                  </TableCell>
-                  <TableCell className="text-xs">{usersList.find(u => u.id === task.assigneeId)?.name || <span className="text-muted-foreground italic opacity-50">Unassigned</span>}</TableCell>
-                  <TableCell className="text-xs">{teams.find(t => t.id === task.teamId)?.name || '-'}</TableCell>
-                  <TableCell><Badge variant="outline" className="text-[10px] font-normal opacity-70">{task.panel}</Badge></TableCell>
-                </TableRow>
+      {loading ? (
+          <div className="flex-1 flex items-center justify-center"><Loader2 className="h-10 w-10 animate-spin text-primary" /></div>
+      ) : (
+          <div className="flex-1 flex gap-4 overflow-x-auto pb-4 items-start pt-2">
+            {STATUSES.map(status => (
+                <div 
+                    key={status} 
+                    className="flex-shrink-0 w-80 bg-slate-100/50 rounded-xl flex flex-col max-h-full border border-slate-200"
+                    onDragOver={handleDragOver}
+                    onDrop={(e) => handleDrop(e, status)}
+                >
+                    <div className="p-3 border-b flex items-center justify-between bg-slate-50/50 rounded-t-xl">
+                        <div className="flex items-center gap-2">
+                            <span className="font-bold text-sm text-slate-700">{status}</span>
+                            <Badge variant="secondary" className="text-[10px] h-5 bg-white border-slate-200 text-slate-600">
+                                {filteredTasks.filter(t => t.status === status).length}
+                            </Badge>
+                        </div>
+                    </div>
+                    
+                    <div className="flex-1 overflow-y-auto p-3 space-y-3">
+                        {filteredTasks.filter(t => t.status === status).map(task => (
+                            <div 
+                                key={task.id}
+                                draggable
+                                onDragStart={(e) => handleDragStart(e, task.id)}
+                                onClick={() => { setSelectedTask(task); setIsTaskDetailOpen(true); }}
+                                className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm hover:shadow-md hover:border-primary transition-all cursor-grab active:cursor-grabbing group relative"
+                            >
+                                <div className="flex items-start justify-between mb-2">
+                                    <div className="flex flex-wrap gap-1">
+                                        <Badge variant="outline" className="text-[9px] h-4 font-normal opacity-70">{task.panel}</Badge>
+                                        <Badge variant="secondary" className="text-[9px] h-4 font-normal">{task.stack}</Badge>
+                                    </div>
+                                    <GripVertical className="h-3 w-3 text-slate-300 group-hover:text-slate-400" />
+                                </div>
+                                
+                                <h3 className="text-sm font-bold text-slate-800 leading-tight mb-2 line-clamp-2" dir="auto">{task.title}</h3>
+                                
+                                <div className="text-[10px] text-muted-foreground truncate mb-3 bg-slate-50 p-1 rounded border border-slate-100 italic">
+                                    {allStories.find(s => s.id === task.userStoryId)?.title || 'No Story context'}
+                                </div>
+                                
+                                <div className="flex items-center justify-between mt-auto pt-2 border-t border-slate-50">
+                                    <div className="flex items-center gap-1.5 text-slate-600">
+                                        <div className="h-5 w-5 rounded-full bg-primary/10 flex items-center justify-center">
+                                            <UserIcon className="h-3 w-3 text-primary" />
+                                        </div>
+                                        <span className="text-[10px] font-medium">
+                                            {usersList.find(u => u.id === task.assigneeId)?.name || <span className="opacity-50 italic font-normal">Unassigned</span>}
+                                        </span>
+                                    </div>
+                                    {task.comments && task.comments.length > 0 && (
+                                        <div className="flex items-center gap-1 text-slate-400">
+                                            <MessageSquare className="h-3 w-3" />
+                                            <span className="text-[10px] font-medium">{task.comments.length}</span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                        {filteredTasks.filter(t => t.status === status).length === 0 && (
+                            <div className="border-2 border-dashed border-slate-200 rounded-lg p-8 flex flex-col items-center justify-center opacity-40">
+                                <div className="text-xs font-medium text-slate-400">Drop tasks here</div>
+                            </div>
+                        )}
+                    </div>
+                </div>
             ))}
-          </TableBody>
-        </Table>
-      </Card>
+          </div>
+      )}
+
       {selectedTask && (
           <TaskDetailModal 
             task={selectedTask} 

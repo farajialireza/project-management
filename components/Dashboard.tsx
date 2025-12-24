@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { useAuth } from '../App';
 import { auth } from '../firebase';
@@ -10,8 +11,8 @@ import { AiAssistantView } from './features/AiAssistantView';
 const TABS = [
   { id: 'backlogs', label: 'Backlogs', icon: Book, component: BacklogsView },
   { id: 'stories', label: 'User Stories', icon: Layout, component: StoriesView },
-  { id: 'milestones', label: 'Milestones', icon: Milestone, component: MilestonesView },
   { id: 'tasks', label: 'Tasks', icon: CheckSquare, component: TasksView },
+  { id: 'milestones', label: 'Milestones', icon: Milestone, component: MilestonesView },
   { id: 'teams', label: 'Teams', icon: Users, component: TeamsView, adminOnly: true },
   { id: 'users', label: 'Users', icon: Settings, component: UsersView, adminOnly: true },
   { id: 'ai-assistant', label: 'AI Assistant', icon: Bot, component: AiAssistantView },
