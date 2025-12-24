@@ -1370,6 +1370,13 @@ export const TasksView = () => {
   const [usersList, setUsersList] = useState<User[]>([]);
   const [allStories, setAllStories] = useState<UserStory[]>([]);
 
+  // Filter States
+  const [filterTeam, setFilterTeam] = useState<string>('All');
+  const [filterStack, setFilterStack] = useState<string>('All');
+  const [filterStatus, setFilterStatus] = useState<string>('All');
+  const [filterAssignee, setFilterAssignee] = useState<string>('All');
+  const [filterPanel, setFilterPanel] = useState<string>('All');
+
   const fetchData = async () => {
     setLoading(true);
     try {
@@ -1404,11 +1411,98 @@ export const TasksView = () => {
 
   useEffect(() => { fetchData(); }, []);
 
+  const filteredTasks = tasks.filter(task => {
+      const matchTeam = filterTeam === 'All' || task.teamId === filterTeam;
+      const matchStack = filterStack === 'All' || task.stack === filterStack;
+      const matchStatus = filterStatus === 'All' || task.status === filterStatus;
+      const matchAssignee = filterAssignee === 'All' || task.assigneeId === filterAssignee;
+      const matchPanel = filterPanel === 'All' || task.panel === filterPanel;
+      return matchTeam && matchStack && matchStatus && matchAssignee && matchPanel;
+  });
+
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h2 className="text-2xl font-bold tracking-tight">All Tasks</h2>
+        
+        {/* Advanced Filters */}
+        <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2 bg-white border rounded-md px-2 py-1 shadow-sm overflow-x-auto max-w-full">
+                <Filter className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                
+                {/* Team Filter */}
+                <select 
+                    className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer min-w-[80px]"
+                    value={filterTeam}
+                    onChange={(e) => setFilterTeam(e.target.value)}
+                >
+                    <option value="All">All Teams</option>
+                    {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+                
+                <div className="w-px h-4 bg-gray-200 mx-1 flex-shrink-0"></div>
+
+                {/* Stack Filter */}
+                <select 
+                    className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer"
+                    value={filterStack}
+                    onChange={(e) => setFilterStack(e.target.value)}
+                >
+                    <option value="All">All Stacks</option>
+                    <option value="Frontend">Frontend</option>
+                    <option value="Backend">Backend</option>
+                </select>
+
+                <div className="w-px h-4 bg-gray-200 mx-1 flex-shrink-0"></div>
+
+                {/* Status Filter */}
+                <select 
+                    className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer"
+                    value={filterStatus}
+                    onChange={(e) => setFilterStatus(e.target.value)}
+                >
+                    <option value="All">All Statuses</option>
+                    {['To Do', 'In Progress', 'Testing', 'Review', 'Done'].map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+
+                <div className="w-px h-4 bg-gray-200 mx-1 flex-shrink-0"></div>
+
+                {/* Person Filter */}
+                <select 
+                    className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer min-w-[100px]"
+                    value={filterAssignee}
+                    onChange={(e) => setFilterAssignee(e.target.value)}
+                >
+                    <option value="All">All Assignees</option>
+                    {usersList.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                </select>
+
+                <div className="w-px h-4 bg-gray-200 mx-1 flex-shrink-0"></div>
+
+                {/* Panel Filter */}
+                <select 
+                    className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer"
+                    value={filterPanel}
+                    onChange={(e) => setFilterPanel(e.target.value)}
+                >
+                    <option value="All">All Panels</option>
+                    <option value="Admin">Admin</option>
+                    <option value="Customer">Customer</option>
+                </select>
+            </div>
+            
+            <Button variant="outline" size="sm" onClick={() => {
+                setFilterTeam('All');
+                setFilterStack('All');
+                setFilterStatus('All');
+                setFilterAssignee('All');
+                setFilterPanel('All');
+            }} title="Reset Filters">
+                <X className="h-4 w-4" />
+            </Button>
+        </div>
       </div>
+
       <Card>
         <Table>
           <TableHeader>
@@ -1417,25 +1511,34 @@ export const TasksView = () => {
               <TableHead>Status</TableHead>
               <TableHead>Stack</TableHead>
               <TableHead>Assignee</TableHead>
+              <TableHead>Team</TableHead>
               <TableHead>Panel</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
-                <TableRow><TableCell colSpan={5} className="text-center py-8"><Loader2 className="h-6 w-6 animate-spin mx-auto" /></TableCell></TableRow>
-            ) : tasks.length === 0 ? (
-                <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground italic">No tasks found.</TableCell></TableRow>
-            ) : tasks.map(task => (
+                <TableRow><TableCell colSpan={6} className="text-center py-8"><Loader2 className="h-6 w-6 animate-spin mx-auto" /></TableCell></TableRow>
+            ) : filteredTasks.length === 0 ? (
+                <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground italic">No tasks match the selected filters.</TableCell></TableRow>
+            ) : filteredTasks.map(task => (
                 <TableRow key={task.id} className="cursor-pointer hover:bg-muted/50" onClick={() => { setSelectedTask(task); setIsTaskDetailOpen(true); }}>
-                  <TableCell className="font-medium">{task.title}</TableCell>
+                  <TableCell className="font-medium">
+                      <div>{task.title}</div>
+                      <div className="text-[10px] text-muted-foreground truncate max-w-[200px]">
+                        {allStories.find(s => s.id === task.userStoryId)?.title || ''}
+                      </div>
+                  </TableCell>
                   <TableCell>
-                    <Badge variant="outline" className={task.status === 'Done' ? 'bg-green-50 text-green-700 border-green-200' : ''}>
+                    <Badge variant="outline" className={`text-[10px] ${task.status === 'Done' ? 'bg-green-50 text-green-700 border-green-200' : task.status === 'In Progress' ? 'bg-blue-50 text-blue-700 border-blue-200' : ''}`}>
                       {task.status}
                     </Badge>
                   </TableCell>
-                  <TableCell>{task.stack}</TableCell>
-                  <TableCell>{usersList.find(u => u.id === task.assigneeId)?.name || 'Unassigned'}</TableCell>
-                  <TableCell><Badge variant="secondary">{task.panel}</Badge></TableCell>
+                  <TableCell>
+                      <Badge variant="secondary" className="text-[10px] font-normal">{task.stack}</Badge>
+                  </TableCell>
+                  <TableCell className="text-xs">{usersList.find(u => u.id === task.assigneeId)?.name || <span className="text-muted-foreground italic opacity-50">Unassigned</span>}</TableCell>
+                  <TableCell className="text-xs">{teams.find(t => t.id === task.teamId)?.name || '-'}</TableCell>
+                  <TableCell><Badge variant="outline" className="text-[10px] font-normal opacity-70">{task.panel}</Badge></TableCell>
                 </TableRow>
             ))}
           </TableBody>
