@@ -1,15 +1,15 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from './firebase';
+import { doc, getDoc } from 'firebase/firestore';
 import { User } from './types';
 import { Auth } from './components/Auth';
 import { Dashboard } from './components/Dashboard';
 
-// Auth Context
 interface AuthContextType {
   user: User | null;
   loading: boolean;
 }
+
 const AuthContext = createContext<AuthContextType>({ user: null, loading: true });
 export const useAuth = () => useContext(AuthContext);
 
@@ -18,22 +18,32 @@ const App = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Firebase compat version uses onAuthStateChanged
     const unsubscribe = auth.onAuthStateChanged(async (firebaseUser) => {
+      setLoading(true);
       if (firebaseUser) {
-        // Fetch extended user profile from Firestore
-        const docRef = doc(db, "users", firebaseUser.uid);
-        const docSnap = await getDoc(docRef);
-        
-        if (docSnap.exists()) {
-          setUser(docSnap.data() as User);
-        } else {
-            // Fallback if doc creation failed or pending
+        try {
+          const userDoc = await getDoc(doc(db, "users", firebaseUser.uid));
+          if (userDoc.exists()) {
+            setUser(userDoc.data() as User);
+          } else {
+            // Fallback for new users or missing docs
             setUser({
-                id: firebaseUser.uid,
-                email: firebaseUser.email || '',
-                name: firebaseUser.displayName || 'User',
-                isAdmin: false
+              id: firebaseUser.uid,
+              name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
+              email: firebaseUser.email || '',
+              isAdmin: firebaseUser.email === 'realovatsug@gmail.com'
             });
+          }
+        } catch (error) {
+          console.error("Error fetching user profile:", error);
+          // Still set a basic user object if doc fetch fails but auth exists
+          setUser({
+            id: firebaseUser.uid,
+            name: firebaseUser.displayName || 'User',
+            email: firebaseUser.email || '',
+            isAdmin: firebaseUser.email === 'realovatsug@gmail.com'
+          });
         }
       } else {
         setUser(null);
@@ -46,8 +56,11 @@ const App = () => {
 
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
+      <div className="flex h-screen items-center justify-center bg-gray-50">
+        <div className="flex flex-col items-center gap-4">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
+          <p className="text-sm font-medium text-muted-foreground">Loading Product Canvas...</p>
+        </div>
       </div>
     );
   }
