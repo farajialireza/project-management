@@ -413,13 +413,14 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
             const response = await ai.models.generateContent({
                 model: 'gemini-3-flash-preview',
                 contents: `Analyze this task and break it down into 3 to 6 practical subtasks for a checklist. 
+                Do NOT assume any specific programming language, library or framework. Focus on core logical requirements and universal tech steps.
                 Task Title: ${task.title}
                 Task Description: ${task.description}
                 Stack: ${task.stack}
                 Language: Persian (Farsi).
                 Return a JSON array of strings.`,
                 config: {
-                    systemInstruction: "You are a senior tech lead. Provide concise, actionable steps in Persian. Return JSON.",
+                    systemInstruction: "You are a senior tech lead. Provide concise, actionable, framework-agnostic steps in Persian. Return JSON.",
                     responseMimeType: "application/json",
                     responseSchema: {
                         type: Type.OBJECT,
@@ -1025,7 +1026,7 @@ export const StoriesView = () => {
         const response = await ai.models.generateContent({
             model: 'gemini-3-flash-preview',
             contents: `Generate technical tasks for this User Story in **Persian (Farsi)**.
-            The project uses **Next.js** for Frontend and **Python Django** for Backend.
+            Do NOT assume any specific programming language, library or framework (be framework-agnostic). Focus on universal technical logic and functional steps.
             Keep the tasks practical but not overly technical.
             
             Story Title: ${targetStory.title}
@@ -1033,7 +1034,7 @@ export const StoriesView = () => {
             
             Return a list of tasks. Each task must have a title and description in Persian, and a technical stack ('Frontend' or 'Backend').`,
             config: {
-                systemInstruction: "You are an expert Agile Developer assistant specializing in Next.js (Frontend) and Python Django (Backend). You speak Farsi. Generate output in JSON.",
+                systemInstruction: "You are an expert Agile Developer assistant. Focus on logical technical tasks without assuming a specific stack. You speak Farsi. Generate output in JSON.",
                 responseMimeType: "application/json",
                 responseSchema: {
                     type: Type.OBJECT,
