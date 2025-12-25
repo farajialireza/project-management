@@ -72,6 +72,12 @@ export interface TaskComment {
   timestamp: number;
 }
 
+export interface SubTask {
+  id: string;
+  title: string;
+  isDone: boolean;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -97,6 +103,7 @@ export interface Task {
   history?: TaskHistory[];
   assignmentHistory?: AssignmentHistory[];
   comments?: TaskComment[];
+  subtasks?: SubTask[];
   
   // Audit
   createdBy?: { userId: string; userName: string; };

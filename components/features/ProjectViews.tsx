@@ -4,8 +4,8 @@ import { useForm } from 'react-hook-form';
 import { db } from '../../firebase';
 import { collection, addDoc, getDocs, doc, deleteDoc, updateDoc, writeBatch, query, where, collectionGroup } from 'firebase/firestore';
 import { Button, Table, TableHeader, TableRow, TableHead, TableBody, TableCell, Dialog, DialogHeader, DialogTitle, Input, Label, DialogFooter, Badge, Card, CardHeader, CardTitle, CardContent, Textarea } from '../ui';
-import { ProductBacklog, UserStory, Milestone, Task, Team, User, TaskComment, AssignmentHistory } from '../../types';
-import { Plus, Trash2, Edit2, ChevronDown, ChevronRight, ListTodo, Sparkles, MessageSquare, History, User as UserIcon, Users as UsersIcon, Clock, Loader2, CheckCircle, Save, X, Filter, Search, Calendar, Layout, BarChart3, FileText, Info, UserPlus, Users, GripVertical } from 'lucide-react';
+import { ProductBacklog, UserStory, Milestone, Task, Team, User, TaskComment, AssignmentHistory, SubTask } from '../../types';
+import { Plus, Trash2, Edit2, ChevronDown, ChevronRight, ListTodo, Sparkles, MessageSquare, History, User as UserIcon, Users as UsersIcon, Clock, Loader2, CheckCircle, Save, X, Filter, Search, Calendar, Layout, BarChart3, FileText, Info, UserPlus, Users, GripVertical, CheckSquare, Square } from 'lucide-react';
 import { useAuth } from '../../App';
 import ReactMarkdown from 'react-markdown';
 import { GoogleGenAI, Type } from "@google/genai";
@@ -290,6 +290,8 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
     const { user } = useAuth();
     const [isEditing, setIsEditing] = useState(false);
     const [editForm, setEditForm] = useState<Partial<Task>>({});
+    const [newSubTask, setNewSubTask] = useState("");
+    const [aiSubLoading, setAiSubLoading] = useState(false);
     
     const teamLeaderId = task?.teamId ? teams.find(t => t.id === task.teamId)?.leaderId : null;
     const canEdit = user?.isAdmin || (user && teamLeaderId === user.id);
@@ -305,6 +307,7 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
                 assigneeId: task.assigneeId || ''
             });
             setIsEditing(false);
+            setNewSubTask("");
         }
     }, [task, isOpen]);
 
@@ -373,6 +376,79 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
         } catch (error) {
             console.error("Update failed", error);
             alert("Failed to update task");
+        }
+    };
+
+    const toggleSubTask = async (id: string) => {
+        const updatedSubtasks = task.subtasks?.map(st => 
+            st.id === id ? { ...st, isDone: !st.isDone } : st
+        );
+        await updateDoc(doc(db, "tasks", task.id), { subtasks: updatedSubtasks });
+        onUpdate({ ...task, subtasks: updatedSubtasks });
+    };
+
+    const addManualSubTask = async () => {
+        if (!newSubTask.trim()) return;
+        const sub: SubTask = {
+            id: Math.random().toString(36).substr(2, 9),
+            title: newSubTask.trim(),
+            isDone: false
+        };
+        const updated = [...(task.subtasks || []), sub];
+        await updateDoc(doc(db, "tasks", task.id), { subtasks: updated });
+        onUpdate({ ...task, subtasks: updated });
+        setNewSubTask("");
+    };
+
+    const removeSubTask = async (id: string) => {
+        const updated = task.subtasks?.filter(st => st.id !== id);
+        await updateDoc(doc(db, "tasks", task.id), { subtasks: updated });
+        onUpdate({ ...task, subtasks: updated });
+    };
+
+    const generateAiSubtasks = async () => {
+        setAiSubLoading(true);
+        try {
+            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+            const response = await ai.models.generateContent({
+                model: 'gemini-3-flash-preview',
+                contents: `Analyze this task and break it down into 3 to 6 practical subtasks for a checklist. 
+                Task Title: ${task.title}
+                Task Description: ${task.description}
+                Stack: ${task.stack}
+                Language: Persian (Farsi).
+                Return a JSON array of strings.`,
+                config: {
+                    systemInstruction: "You are a senior tech lead. Provide concise, actionable steps in Persian. Return JSON.",
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: Type.OBJECT,
+                        properties: {
+                            steps: {
+                                type: Type.ARRAY,
+                                items: { type: Type.STRING }
+                            }
+                        }
+                    }
+                }
+            });
+            
+            const data = JSON.parse(cleanJson(response.text || "{}"));
+            if (data.steps) {
+                const newSubs: SubTask[] = data.steps.map((s: string) => ({
+                    id: Math.random().toString(36).substr(2, 9),
+                    title: s,
+                    isDone: false
+                }));
+                const updated = [...(task.subtasks || []), ...newSubs];
+                await updateDoc(doc(db, "tasks", task.id), { subtasks: updated });
+                onUpdate({ ...task, subtasks: updated });
+            }
+        } catch (e) {
+            console.error(e);
+            alert("AI subtask generation failed.");
+        } finally {
+            setAiSubLoading(false);
         }
     };
 
@@ -487,6 +563,62 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
                                         </div>
                                     </div>
                                 )}
+                             </div>
+
+                             {/* Subtasks Section */}
+                             <div className="space-y-4 pt-4 border-t">
+                                <div className="flex justify-between items-center">
+                                    <h3 className="text-sm font-semibold text-muted-foreground flex items-center gap-2">
+                                        <CheckSquare className="h-4 w-4"/> Checklist / Subtasks
+                                        {task.subtasks && task.subtasks.length > 0 && (
+                                            <span className="text-xs bg-slate-200 px-1.5 rounded-full font-bold">
+                                                {task.subtasks.filter(s => s.isDone).length}/{task.subtasks.length}
+                                            </span>
+                                        )}
+                                    </h3>
+                                    <Button 
+                                        variant="outline" 
+                                        size="sm" 
+                                        className="h-8 text-xs gap-1.5" 
+                                        onClick={generateAiSubtasks} 
+                                        disabled={aiSubLoading}
+                                    >
+                                        {aiSubLoading ? <Loader2 className="h-3 w-3 animate-spin"/> : <Sparkles className="h-3 w-3 text-purple-600"/>}
+                                        AI Breakdown
+                                    </Button>
+                                </div>
+                                
+                                <div className="space-y-2">
+                                    {task.subtasks?.map(st => (
+                                        <div key={st.id} className="flex items-center group gap-2 p-2 hover:bg-slate-50 rounded-md border border-transparent hover:border-slate-100 transition-colors">
+                                            <button onClick={() => toggleSubTask(st.id)} className="text-slate-400 hover:text-primary transition-colors">
+                                                {st.isDone ? <CheckSquare className="h-5 w-5 text-green-600"/> : <Square className="h-5 w-5"/>}
+                                            </button>
+                                            <span className={`flex-1 text-sm transition-all ${st.isDone ? 'line-through text-slate-400' : 'text-slate-700'}`} dir="auto">
+                                                {st.title}
+                                            </span>
+                                            <Button 
+                                                variant="ghost" 
+                                                size="icon" 
+                                                className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-destructive"
+                                                onClick={() => removeSubTask(st.id)}
+                                            >
+                                                <Trash2 className="h-3 w-3"/>
+                                            </Button>
+                                        </div>
+                                    ))}
+                                    
+                                    <div className="flex gap-2 items-center pt-2">
+                                        <Input 
+                                            placeholder="Add a step manually..." 
+                                            value={newSubTask}
+                                            onChange={e => setNewSubTask(e.target.value)}
+                                            onKeyDown={e => e.key === 'Enter' && addManualSubTask()}
+                                            className="h-9 text-sm"
+                                        />
+                                        <Button variant="secondary" size="sm" className="h-9" onClick={addManualSubTask}><Plus className="h-4 w-4"/></Button>
+                                    </div>
+                                </div>
                              </div>
 
                              {parentStory && (
@@ -868,6 +1000,7 @@ export const StoriesView = () => {
         }],
         assignmentHistory: assignmentHistory,
         comments: [],
+        subtasks: [],
         createdBy: user ? { userId: user.id, userName: user.name } : { userId: 'system', userName: 'System' }
     };
     
@@ -947,6 +1080,7 @@ export const StoriesView = () => {
                     }],
                     assignmentHistory: [],
                     comments: [],
+                    subtasks: [],
                     createdBy: { userId: user?.id || 'ai', userName: user?.name || 'AI Assistant' }
                 };
                 
@@ -1367,9 +1501,12 @@ export const TasksView = () => {
   const [loading, setLoading] = useState(true);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isTaskDetailOpen, setIsTaskDetailOpen] = useState(false);
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [teams, setTeams] = useState<Team[]>([]);
   const [usersList, setUsersList] = useState<User[]>([]);
   const [allStories, setAllStories] = useState<UserStory[]>([]);
+  
+  const { register: regCreate, handleSubmit: subCreate, reset: resetCreate, watch: watchCreate, setValue: setValueCreate } = useForm<Task>();
 
   // Filter States
   const [filterTeam, setFilterTeam] = useState<string>('All');
@@ -1377,6 +1514,7 @@ export const TasksView = () => {
   const [filterStatus, setFilterStatus] = useState<string>('All');
   const [filterAssignee, setFilterAssignee] = useState<string>('All');
   const [filterPanel, setFilterPanel] = useState<string>('All');
+  const [filterStory, setFilterStory] = useState<string>('All');
 
   const STATUSES: Task['status'][] = ['To Do', 'In Progress', 'Testing', 'Review', 'Done'];
 
@@ -1404,7 +1542,9 @@ export const TasksView = () => {
       });
 
       const storiesArrays = await Promise.all(storyPromises);
-      setAllStories(storiesArrays.flat());
+      const flatStories = storiesArrays.flat();
+      flatStories.sort((a, b) => (a.displayId || "").localeCompare(b.displayId || "") || a.title.localeCompare(b.title));
+      setAllStories(flatStories);
     } catch (e) {
       console.error("Error fetching tasks view data", e);
     } finally {
@@ -1450,25 +1590,112 @@ export const TasksView = () => {
     }
   };
 
+  const onManualCreateSubmit = async (data: any) => {
+    const storyId = data.userStoryId;
+    const parentStory = allStories.find(s => s.id === storyId);
+    if (!parentStory) return;
+
+    const now = Date.now();
+    const assignmentHistory: AssignmentHistory[] = [];
+
+    if (data.teamId) {
+        assignmentHistory.push({
+            type: 'Team',
+            assignedToId: data.teamId,
+            assignedToName: teams.find(t => t.id === data.teamId)?.name || 'Team',
+            assignedById: user?.id || 'system',
+            assignedByName: user?.name || 'System',
+            timestamp: now
+        });
+    }
+
+    if (data.assigneeId) {
+        assignmentHistory.push({
+            type: 'Member',
+            assignedToId: data.assigneeId,
+            assignedToName: usersList.find(u => u.id === data.assigneeId)?.name || 'User',
+            assignedById: user?.id || 'system',
+            assignedByName: user?.name || 'System',
+            timestamp: now
+        });
+    }
+
+    const newTaskData = {
+        title: data.title,
+        description: data.description || '',
+        status: 'To Do',
+        userStoryId: storyId,
+        backlogId: parentStory.backlogId,
+        panel: parentStory.panel || 'Admin',
+        stack: data.stack,
+        teamId: data.teamId || null,
+        assigneeId: data.assigneeId || null,
+        createdAt: now,
+        history: [{
+            status: 'To Do',
+            timestamp: now,
+            userId: user?.id || 'system',
+            userName: user?.name || 'System'
+        }],
+        assignmentHistory: assignmentHistory,
+        comments: [],
+        subtasks: [],
+        createdBy: user ? { userId: user.id, userName: user.name } : { userId: 'system', userName: 'System' }
+    };
+    
+    try {
+        const docRef = await addDoc(collection(db, "tasks"), newTaskData);
+        const newTask = { id: docRef.id, ...newTaskData } as Task;
+        setTasks(prev => [...prev, newTask]);
+        setIsCreateDialogOpen(false);
+        resetCreate();
+    } catch (e) {
+        console.error(e);
+        alert("Failed to create task");
+    }
+  };
+
+  const watchTeam = watchCreate('teamId');
+  const availableMembers = watchTeam 
+      ? usersList.filter(u => teams.find(t => t.id === watchTeam)?.memberIds.includes(u.id))
+      : [];
+
   const filteredTasks = tasks.filter(task => {
       const matchTeam = filterTeam === 'All' || task.teamId === filterTeam;
       const matchStack = filterStack === 'All' || task.stack === filterStack;
       const matchStatus = filterStatus === 'All' || task.status === filterStatus;
       const matchAssignee = filterAssignee === 'All' || task.assigneeId === filterAssignee;
       const matchPanel = filterPanel === 'All' || task.panel === filterPanel;
-      return matchTeam && matchStack && matchStatus && matchAssignee && matchPanel;
+      const matchStory = filterStory === 'All' || task.userStoryId === filterStory;
+      return matchTeam && matchStack && matchStatus && matchAssignee && matchPanel && matchStory;
   });
 
   return (
     <div className="space-y-4 h-[calc(100vh-180px)] flex flex-col">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 flex-shrink-0">
-        <h2 className="text-2xl font-bold tracking-tight">Project Board</h2>
+        <div className="flex items-center gap-4">
+            <h2 className="text-2xl font-bold tracking-tight">Project Board</h2>
+            <Button size="sm" onClick={() => { resetCreate(); setValueCreate('stack', 'Frontend'); setIsCreateDialogOpen(true); }}>
+                <Plus className="mr-2 h-4 w-4" /> Create Task
+            </Button>
+        </div>
         
         {/* Advanced Filters */}
         <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-2 bg-white border rounded-md px-2 py-1 shadow-sm overflow-x-auto max-w-full">
                 <Filter className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                 
+                <select 
+                    className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer min-w-[120px] max-w-[200px]"
+                    value={filterStory}
+                    onChange={(e) => setFilterStory(e.target.value)}
+                >
+                    <option value="All">All Stories</option>
+                    {allStories.map(s => <option key={s.id} value={s.id}>{s.displayId ? `${s.displayId}: ` : ''}{s.title}</option>)}
+                </select>
+
+                <div className="w-px h-4 bg-gray-200 mx-1 flex-shrink-0"></div>
+
                 <select 
                     className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer min-w-[80px]"
                     value={filterTeam}
@@ -1520,6 +1747,7 @@ export const TasksView = () => {
                 setFilterStatus('All');
                 setFilterAssignee('All');
                 setFilterPanel('All');
+                setFilterStory('All');
             }} title="Reset Filters">
                 <X className="h-4 w-4" />
             </Button>
@@ -1598,6 +1826,59 @@ export const TasksView = () => {
           </div>
       )}
 
+      {/* Manual Task Creation Dialog */}
+      <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+        <DialogHeader><DialogTitle>Create New Task</DialogTitle></DialogHeader>
+        <form onSubmit={subCreate(onManualCreateSubmit)} className="space-y-4 py-4">
+            <div className="space-y-2">
+                <Label>Parent User Story</Label>
+                <select 
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" 
+                    {...regCreate('userStoryId', { required: true })}
+                >
+                    <option value="">-- Select Story --</option>
+                    {allStories.map(s => <option key={s.id} value={s.id}>{s.displayId ? `${s.displayId}: ` : ''}{s.title}</option>)}
+                </select>
+            </div>
+            <div className="space-y-2">
+                <Label>Title</Label>
+                <Input {...regCreate('title', { required: true })} placeholder="Task title..." />
+            </div>
+            <div className="space-y-2">
+                <Label>Description (Markdown)</Label>
+                <Textarea {...regCreate('description')} placeholder="Supports Markdown..." />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                    <Label>Stack</Label>
+                    <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...regCreate('stack')}>
+                        <option value="Frontend">Frontend</option>
+                        <option value="Backend">Backend</option>
+                    </select>
+                </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                    <Label>Assign Team</Label>
+                    <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...regCreate('teamId')}>
+                        <option value="">-- No Team --</option>
+                        {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                </div>
+                <div className="space-y-2">
+                    <Label>Assign Member</Label>
+                    <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...regCreate('assigneeId')}>
+                            <option value="">-- Unassigned --</option>
+                            {availableMembers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                    </select>
+                </div>
+            </div>
+            <DialogFooter>
+                <Button type="submit">Create Task</Button>
+            </DialogFooter>
+        </form>
+      </Dialog>
+
       {selectedTask && (
           <TaskDetailModal 
             task={selectedTask} 
@@ -1613,7 +1894,6 @@ export const TasksView = () => {
             }}
             teams={teams}
             usersList={usersList}
-            // Fix: correctly reference the 'allStories' state variable instead of undefined 'stories'
             allStories={allStories}
           />
       )}
