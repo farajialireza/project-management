@@ -36,6 +36,7 @@ export interface UserStory {
   role?: string;
   displayId?: string;
   panel?: 'Admin' | 'Customer';
+  createdAt?: number; // Added for Lead Time analysis
 }
 
 export interface Milestone {

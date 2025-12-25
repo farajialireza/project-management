@@ -3,16 +3,18 @@ import React, { useState } from 'react';
 import { useAuth } from '../App';
 import { auth } from '../firebase';
 import { Button } from './ui';
-import { LogOut, Layout, Book, Milestone, CheckSquare, Users, Settings, Bot } from 'lucide-react';
+import { LogOut, Layout, Book, Milestone, CheckSquare, Users, Settings, Bot, BarChart3 } from 'lucide-react';
 import { BacklogsView, StoriesView, MilestonesView, TasksView } from './features/ProjectViews';
 import { TeamsView, UsersView } from './features/AdminViews';
 import { AiAssistantView } from './features/AiAssistantView';
+import { AnalyticsView } from './features/AnalyticsView';
 
 const TABS = [
   { id: 'backlogs', label: 'Backlogs', icon: Book, component: BacklogsView },
   { id: 'stories', label: 'User Stories', icon: Layout, component: StoriesView },
   { id: 'tasks', label: 'Tasks', icon: CheckSquare, component: TasksView },
   { id: 'milestones', label: 'Milestones', icon: Milestone, component: MilestonesView },
+  { id: 'analytics', label: 'Analytics', icon: BarChart3, component: AnalyticsView },
   { id: 'teams', label: 'Teams', icon: Users, component: TeamsView, adminOnly: true },
   { id: 'users', label: 'Users', icon: Settings, component: UsersView, adminOnly: true },
   { id: 'ai-assistant', label: 'AI Assistant', icon: Bot, component: AiAssistantView },
