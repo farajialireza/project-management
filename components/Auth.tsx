@@ -19,13 +19,14 @@ export const Auth = () => {
         });
         if (error) throw error;
       } else {
-        // Sign Up with full name in metadata
+        // Sign Up with full name and gitlabUserId in metadata
         const { error } = await supabase.auth.signUp({
           email: data.email,
           password: data.password,
           options: {
             data: {
-              full_name: data.name
+              full_name: data.name,
+              gitlabUserId: data.gitlabUserId
             }
           }
         });
@@ -51,10 +52,16 @@ export const Auth = () => {
         <CardContent>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
             {!isLogin && (
-              <div className="space-y-2">
-                <Label htmlFor="name">Full Name</Label>
-                <Input id="name" placeholder="John Doe" {...register('name', { required: !isLogin })} />
-              </div>
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="name">Full Name</Label>
+                  <Input id="name" placeholder="John Doe" {...register('name', { required: !isLogin })} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="gitlabUserId">GitLab Username</Label>
+                  <Input id="gitlabUserId" placeholder="e.g. gitlab_user123" {...register('gitlabUserId', { required: !isLogin })} />
+                </div>
+              </>
             )}
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>

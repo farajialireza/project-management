@@ -5,6 +5,7 @@ export interface User {
   email: string;
   isAdmin: boolean;
   gitlabToken?: string;
+  gitlabUserId?: string; // New: For mapping CLI/CI events to the user
 }
 
 export interface Team {
@@ -13,8 +14,8 @@ export interface Team {
   description: string;
   leaderId: string;
   memberIds: string[];
-  repositories: string[];
-  gitlabProjectId?: string; // New: GitLab Integration
+  repositories: string[]; // Supports multiple repo names
+  gitlabProjectId?: string;
 }
 
 export interface ProductBacklog {
@@ -39,7 +40,6 @@ export interface UserStory {
   displayId?: string;
   panel?: 'Admin' | 'Customer';
   createdAt?: number;
-  // Added milestoneId to support story-milestone relationship and fix type errors in API
   milestoneId?: string;
 }
 
@@ -94,32 +94,23 @@ export interface LinkedCommit {
 export interface Task {
   id: string;
   title: string;
-  description: string; // Markdown
+  description: string;
   status: 'To Do' | 'In Progress' | 'Testing' | 'Review' | 'Done';
-  
-  // Relationships
   userStoryId: string;
   backlogId: string;
   teamId?: string;
   assigneeId?: string;
   milestoneId?: string;
-
-  // Attributes
   stack: 'Frontend' | 'Backend';
   panel: 'Admin' | 'Customer'; 
-  
-  // Tracking
   createdAt: number;
   startTime?: number; 
   endTime?: number; 
-  
   history?: TaskHistory[];
   assignmentHistory?: AssignmentHistory[];
   comments?: TaskComment[];
   subtasks?: SubTask[];
-  linkedCommits?: LinkedCommit[]; // New: Version Control Integration
-  
-  // Audit
+  linkedCommits?: LinkedCommit[];
   createdBy?: { userId: string; userName: string; };
   lastEditedBy?: { userId: string; userName: string; timestamp: number; };
 }
