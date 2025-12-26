@@ -35,7 +35,8 @@ const Notification = ({ message, type, onClose }: { message: string, type: 'succ
   );
 };
 
-const SkeletonRow = ({ cols }: { cols: number }) => (
+// Added key?: React.Key to the props definition of SkeletonRow to resolve "property 'key' does not exist" errors when used in a list.
+const SkeletonRow = ({ cols }: { cols: number; key?: React.Key }) => (
   <TableRow className="animate-pulse bg-slate-50/50">
     {Array.from({ length: cols }).map((_, i) => (
       <TableCell key={i}>

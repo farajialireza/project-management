@@ -23,10 +23,10 @@ export const usersApi = {
       .from('users')
       .select('*')
       .eq('id', uid)
-      .single();
+      .maybeSingle(); // Changed from single() to maybeSingle() to avoid throwing on 0 rows
     
-    if (error || !data) return null;
-    return data as User;
+    if (error) throw error;
+    return data as User | null;
   },
 
   async updateAdminStatus(userId: string, isAdmin: boolean): Promise<void> {
@@ -44,7 +44,6 @@ export const usersApi = {
  */
 export const teamsApi = {
   async getAll(): Promise<Team[]> {
-    // We join with team_members to get the list of IDs for each team
     const { data, error } = await supabase
       .from('teams')
       .select('*, team_members(userId)')
@@ -52,7 +51,6 @@ export const teamsApi = {
 
     if (error) throw error;
 
-    // Map relational data back to our Team interface for UI compatibility
     return data.map((team: any) => ({
       id: team.id,
       name: team.name,
@@ -67,7 +65,6 @@ export const teamsApi = {
   async save(team: Partial<Team>, memberIds: string[]): Promise<void> {
     const isNew = !team.id;
     
-    // 1. Save the main team record
     const teamPayload = {
       name: team.name,
       description: team.description,
@@ -94,8 +91,6 @@ export const teamsApi = {
       if (error) throw error;
     }
 
-    // 2. Sync members (Relational Sync)
-    // Delete existing members first (simple sync strategy)
     if (!isNew) {
       const { error: delError } = await supabase
         .from('team_members')
@@ -104,7 +99,6 @@ export const teamsApi = {
       if (delError) throw delError;
     }
 
-    // Insert new members
     if (memberIds.length > 0) {
       const memberPayload = memberIds.map(uid => ({
         teamId: teamId,
@@ -118,7 +112,6 @@ export const teamsApi = {
   },
 
   async delete(id: string): Promise<void> {
-    // Note: team_members will be deleted automatically via ON DELETE CASCADE in Postgres
     const { error } = await supabase
       .from('teams')
       .delete()

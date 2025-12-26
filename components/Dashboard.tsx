@@ -10,23 +10,24 @@ import { AiAssistantView } from './features/AiAssistantView';
 import { AnalyticsView } from './features/AnalyticsView';
 
 const TABS = [
-  { id: 'backlogs', label: 'Backlogs', icon: Book, component: BacklogsView },
+  { id: 'backlogs', label: 'Backlogs', icon: Book, component: BacklogsView, adminOnly: true },
   { id: 'stories', label: 'User Stories', icon: Layout, component: StoriesView },
   { id: 'tasks', label: 'Tasks', icon: CheckSquare, component: TasksView },
   { id: 'milestones', label: 'Milestones', icon: Milestone, component: MilestonesView },
-  { id: 'analytics', label: 'Analytics', icon: BarChart3, component: AnalyticsView },
+  { id: 'analytics', label: 'Analytics', icon: BarChart3, component: AnalyticsView, adminOnly: true },
   { id: 'teams', label: 'Teams', icon: Users, component: TeamsView, adminOnly: true },
   { id: 'users', label: 'Users', icon: Settings, component: UsersView, adminOnly: true },
-  { id: 'ai-assistant', label: 'AI Assistant', icon: Bot, component: AiAssistantView },
+  { id: 'ai-assistant', label: 'AI Assistant', icon: Bot, component: AiAssistantView, adminOnly: true },
 ];
 
 export const Dashboard = () => {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState('backlogs');
+  // If not admin, start on 'stories' since 'backlogs' is now restricted
+  const [activeTab, setActiveTab] = useState(user?.isAdmin ? 'backlogs' : 'stories');
 
   const handleLogout = () => supabase.auth.signOut();
 
-  const ActiveComponent = TABS.find(t => t.id === activeTab)?.component || BacklogsView;
+  const ActiveComponent = TABS.find(t => t.id === activeTab)?.component || StoriesView;
 
   return (
     <div className="min-h-screen bg-background">

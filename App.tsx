@@ -25,7 +25,6 @@ const App = () => {
       if (profile) {
         setUser(profile);
       } else {
-        // Fallback if record doesn't exist yet (Trigger delay or first sign-in)
         setUser({
           id: uid,
           name: displayName || email.split('@')[0] || 'User',
@@ -58,18 +57,21 @@ const App = () => {
 
     initAuth();
 
-    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session) {
         setLoading(true);
-        await fetchProfile(
-          session.user.id, 
-          session.user.email!, 
-          session.user.user_metadata?.full_name
-        );
-        setLoading(false);
+        try {
+          await fetchProfile(
+            session.user.id, 
+            session.user.email!, 
+            session.user.user_metadata?.full_name
+          );
+        } finally {
+          setLoading(false);
+        }
       } else if (event === 'SIGNED_OUT') {
         setUser(null);
+        setLoading(false);
       }
     });
 
