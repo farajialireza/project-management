@@ -1,12 +1,10 @@
-
-
 import { defineConfig, loadEnv } from 'vite';
-// Fix: Explicitly import process from node:process to resolve the error where 'cwd' property is not found on type 'Process'
 import process from 'node:process';
 
 export default defineConfig(({ mode }) => {
   // بارگذاری فایل‌های env بر اساس حالت فعلی (development, production و غیره)
   // پارامتر سوم '' باعث می‌شود تمامی متغیرها (بدون نیاز به پیشوند VITE_) بارگذاری شوند
+  // Fix: Use process.cwd() instead of the non-existent named export cwd().
   const env = loadEnv(mode, process.cwd(), '');
 
   // تبدیل رشته دامنه‌ها به آرایه‌ای از رشته‌ها

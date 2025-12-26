@@ -1,14 +1,14 @@
 
 import React, { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { db } from '../../firebase';
-import { collection, addDoc, getDocs, doc, deleteDoc, updateDoc, writeBatch, query, where, collectionGroup } from 'firebase/firestore';
 import { Button, Table, TableHeader, TableRow, TableHead, TableBody, TableCell, Dialog, DialogHeader, DialogTitle, Input, Label, DialogFooter, Badge, Card, CardHeader, CardTitle, CardContent, Textarea } from '../ui';
 import { ProductBacklog, UserStory, Milestone, Task, Team, User, TaskComment, AssignmentHistory, SubTask } from '../../types';
-import { Plus, Trash2, Edit2, ChevronDown, ChevronRight, ListTodo, Sparkles, MessageSquare, History, User as UserIcon, Users as UsersIcon, Clock, Loader2, CheckCircle, Save, X, Filter, Search, Calendar, Layout, BarChart3, FileText, Info, UserPlus, Users, GripVertical, CheckSquare, Square } from 'lucide-react';
+import { Plus, Trash2, Edit2, ChevronDown, ChevronRight, ListTodo, Sparkles, MessageSquare, History, User as UserIcon, Users as UsersIcon, Clock, Loader2, CheckCircle, Save, X, Filter, Search, Calendar, Layout, BarChart3, FileText, Info, UserPlus, Users, GripVertical, CheckSquare, Square, MoreVertical, ExternalLink, Milestone as MilestoneIcon } from 'lucide-react';
 import { useAuth } from '../../App';
 import ReactMarkdown from 'react-markdown';
 import { GoogleGenAI, Type } from "@google/genai";
+import { backlogsApi, storiesApi, tasksApi, milestonesApi } from '../../api/project';
+import { usersApi, teamsApi } from '../../api/admin';
 
 // --- Helpers ---
 const cleanJson = (text: string) => {
@@ -18,9 +18,9 @@ const cleanJson = (text: string) => {
 };
 
 const ProgressBar = ({ progress, className = "" }: { progress: number, className?: string }) => (
-  <div className={`w-full bg-gray-200 rounded-full h-2 overflow-hidden ${className}`}>
+  <div className={`w-full bg-gray-100 rounded-full h-2 overflow-hidden ${className}`}>
     <div 
-      className={`h-full transition-all duration-500 ${progress === 100 ? 'bg-green-500' : progress > 0 ? 'bg-primary' : 'bg-transparent'}`} 
+      className={`h-full transition-all duration-700 ease-out ${progress === 100 ? 'bg-emerald-500' : progress > 50 ? 'bg-primary' : 'bg-amber-500'}`} 
       style={{ width: `${progress}%` }}
     />
   </div>
@@ -30,6 +30,7 @@ const ProgressBar = ({ progress, className = "" }: { progress: number, className
 export const BacklogsView = () => {
   const { user } = useAuth();
   const [backlogs, setBacklogs] = useState<ProductBacklog[]>([]);
+  const [loading, setLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -40,12 +41,13 @@ export const BacklogsView = () => {
 
   const fetchBacklogs = async () => {
     try {
-      const querySnapshot = await getDocs(collection(db, "product_backlogs"));
-      const data = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() } as ProductBacklog));
-      data.sort((a, b) => (a.displayId || "").localeCompare(b.displayId || "") || a.title.localeCompare(b.title));
+      setLoading(true);
+      const data = await backlogsApi.getAll();
       setBacklogs(data);
     } catch (error) {
       console.error("Error fetching backlogs:", error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -61,27 +63,9 @@ export const BacklogsView = () => {
     if (!window.confirm(confirmMessage)) return;
 
     setDeletingId(id);
-
     try {
-      const batch = writeBatch(db);
-      const tasksQuery = query(collection(db, "tasks"), where("backlogId", "==", id));
-      const tasksSnap = await getDocs(tasksQuery);
-      tasksSnap.docs.forEach(taskDoc => {
-        batch.delete(taskDoc.ref);
-      });
-
-      const storiesRef = collection(db, "product_backlogs", id, "user_stories");
-      const storiesSnap = await getDocs(storiesRef);
-      storiesSnap.docs.forEach(storyDoc => {
-        batch.delete(storyDoc.ref);
-      });
-
-      const backlogRef = doc(db, "product_backlogs", id);
-      batch.delete(backlogRef);
-
-      await batch.commit();
+      await backlogsApi.delete(id);
       setBacklogs(prev => prev.filter(b => b.id !== id));
-      alert("بکلگ و تمامی داده‌های مرتبط با موفقیت حذف شدند.");
     } catch (error: any) {
       console.error("Critical error during backlog deletion:", error);
       alert("خطا در حذف بکلگ: " + (error.message || "خطای ناشناخته"));
@@ -104,18 +88,15 @@ export const BacklogsView = () => {
 
   const onSubmit = async (data: any) => {
     try {
-      if (editingId) {
-        await updateDoc(doc(db, "product_backlogs", editingId), data);
-      } else {
-        await addDoc(collection(db, "product_backlogs"), { ...data, createdAt: Date.now() });
-      }
+      const payload = editingId ? { ...data, id: editingId } : data;
+      await backlogsApi.save(payload);
       setIsDialogOpen(false);
       reset();
       setEditingId(null);
       fetchBacklogs();
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error saving backlog:", error);
-      alert("خطا در ذخیره‌سازی.");
+      alert("خطا در ذخیره‌سازی: " + (error.message || "خطای ناشناخته"));
     }
   };
 
@@ -178,7 +159,13 @@ export const BacklogsView = () => {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredBacklogs.map(bl => (
+            {loading ? (
+               Array.from({ length: 5 }).map((_, i) => (
+                 <TableRow key={i} className="animate-pulse">
+                   <TableCell colSpan={7} className="h-12 bg-slate-50/50" />
+                 </TableRow>
+               ))
+            ) : filteredBacklogs.map(bl => (
               <TableRow key={bl.id}>
                 <TableCell className="font-mono text-xs">{bl.displayId || '-'}</TableCell>
                 <TableCell>
@@ -227,7 +214,7 @@ export const BacklogsView = () => {
                 )}
               </TableRow>
             ))}
-            {filteredBacklogs.length === 0 && (
+            {!loading && filteredBacklogs.length === 0 && (
               <TableRow>
                 <TableCell colSpan={7} className="text-center py-8 text-muted-foreground italic">
                   No backlogs found.
@@ -316,17 +303,21 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
     const updateStatus = async (newStatus: Task['status']) => {
         if (!user) return;
         const now = Date.now();
-        const updates: any = { 
+        const updates: Partial<Task> = { 
             status: newStatus,
             history: [...(task.history || []), { status: newStatus, timestamp: now, userId: user.id, userName: user.name }]
         };
 
         if (newStatus === 'In Progress' && !task.startTime) updates.startTime = now;
         if (newStatus === 'Done') updates.endTime = now;
-        if (task.status === 'Done' && newStatus !== 'Done') updates.endTime = null;
-
-        await updateDoc(doc(db, "tasks", task.id), updates);
-        onUpdate({ ...task, ...updates });
+        
+        try {
+          await tasksApi.updateStatus(task.id, updates);
+          onUpdate({ ...task, ...updates } as Task);
+        } catch (error: any) {
+          console.error("Status update failed:", error);
+          alert("Failed to update status: " + (error.message || "Unknown error"));
+        }
     };
 
     const handleSaveEdit = async () => {
@@ -335,56 +326,47 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
             const now = Date.now();
             const newAssignmentHistory: AssignmentHistory[] = [...(task.assignmentHistory || [])];
 
-            // Track Team Assignment Changes
             if (editForm.teamId !== task.teamId) {
                 const newTeamName = editForm.teamId ? (teams.find(t => t.id === editForm.teamId)?.name || 'Unknown Team') : 'Unassigned (None)';
                 newAssignmentHistory.push({
-                    type: 'Team',
-                    assignedToId: editForm.teamId || '',
-                    assignedToName: newTeamName,
-                    assignedById: user.id,
-                    assignedByName: user.name,
-                    timestamp: now
+                    type: 'Team', assignedToId: editForm.teamId || '', assignedToName: newTeamName,
+                    assignedById: user.id, assignedByName: user.name, timestamp: now
                 });
             }
 
-            // Track Member Assignment Changes
             if (editForm.assigneeId !== task.assigneeId) {
                 const newMemberName = editForm.assigneeId ? (usersList.find(u => u.id === editForm.assigneeId)?.name || 'Unknown User') : 'Unassigned (None)';
                 newAssignmentHistory.push({
-                    type: 'Member',
-                    assignedToId: editForm.assigneeId || '',
-                    assignedToName: newMemberName,
-                    assignedById: user.id,
-                    assignedByName: user.name,
-                    timestamp: now
+                    type: 'Member', assignedToId: editForm.assigneeId || '', assignedToName: newMemberName,
+                    assignedById: user.id, assignedByName: user.name, timestamp: now
                 });
             }
 
             const updates = {
                 ...editForm,
+                id: task.id,
                 assignmentHistory: newAssignmentHistory,
-                lastEditedBy: {
-                    userId: user.id,
-                    userName: user.name,
-                    timestamp: now
-                }
+                lastEditedBy: { userId: user.id, userName: user.name, timestamp: now }
             };
-            await updateDoc(doc(db, "tasks", task.id), updates);
-            onUpdate({ ...task, ...updates } as Task);
+            const updatedTask = await tasksApi.save(updates);
+            onUpdate(updatedTask);
             setIsEditing(false);
-        } catch (error) {
-            console.error("Update failed", error);
-            alert("Failed to update task");
+        } catch (error: any) {
+            console.error("Update failed:", error);
+            alert("Failed to update task: " + (error.message || "Unknown error"));
         }
     };
 
     const toggleSubTask = async (id: string) => {
         const updatedSubtasks = task.subtasks?.map(st => 
             st.id === id ? { ...st, isDone: !st.isDone } : st
-        );
-        await updateDoc(doc(db, "tasks", task.id), { subtasks: updatedSubtasks });
-        onUpdate({ ...task, subtasks: updatedSubtasks });
+        ) || [];
+        try {
+          await tasksApi.updateStatus(task.id, { subtasks: updatedSubtasks });
+          onUpdate({ ...task, subtasks: updatedSubtasks });
+        } catch (error: any) {
+          alert("Failed to update subtask: " + (error.message || "Unknown error"));
+        }
     };
 
     const addManualSubTask = async () => {
@@ -395,15 +377,23 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
             isDone: false
         };
         const updated = [...(task.subtasks || []), sub];
-        await updateDoc(doc(db, "tasks", task.id), { subtasks: updated });
-        onUpdate({ ...task, subtasks: updated });
-        setNewSubTask("");
+        try {
+          await tasksApi.updateStatus(task.id, { subtasks: updated });
+          onUpdate({ ...task, subtasks: updated });
+          setNewSubTask("");
+        } catch (error: any) {
+          alert("Failed to add subtask: " + (error.message || "Unknown error"));
+        }
     };
 
     const removeSubTask = async (id: string) => {
-        const updated = task.subtasks?.filter(st => st.id !== id);
-        await updateDoc(doc(db, "tasks", task.id), { subtasks: updated });
-        onUpdate({ ...task, subtasks: updated });
+        const updated = task.subtasks?.filter(st => st.id !== id) || [];
+        try {
+          await tasksApi.updateStatus(task.id, { subtasks: updated });
+          onUpdate({ ...task, subtasks: updated });
+        } catch (error: any) {
+          alert("Failed to remove subtask: " + (error.message || "Unknown error"));
+        }
     };
 
     const generateAiSubtasks = async () => {
@@ -412,42 +402,29 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
             const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
             const response = await ai.models.generateContent({
                 model: 'gemini-3-flash-preview',
-                contents: `Analyze this task and break it down into 3 to 6 practical subtasks for a checklist. 
-                Do NOT assume any specific programming language, library or framework. Focus on core logical requirements and universal tech steps.
-                Task Title: ${task.title}
-                Task Description: ${task.description}
-                Stack: ${task.stack}
-                Language: Persian (Farsi).
-                Return a JSON array of strings.`,
+                contents: `Break this task into 3-6 practical subtasks for a checklist. Farsi. Return JSON array.
+                Title: ${task.title}
+                Desc: ${task.description}`,
                 config: {
-                    systemInstruction: "You are a senior tech lead. Provide concise, actionable, framework-agnostic steps in Persian. Return JSON.",
                     responseMimeType: "application/json",
                     responseSchema: {
                         type: Type.OBJECT,
-                        properties: {
-                            steps: {
-                                type: Type.ARRAY,
-                                items: { type: Type.STRING }
-                            }
-                        }
+                        properties: { steps: { type: Type.ARRAY, items: { type: Type.STRING } } }
                     }
                 }
             });
-            
             const data = JSON.parse(cleanJson(response.text || "{}"));
             if (data.steps) {
                 const newSubs: SubTask[] = data.steps.map((s: string) => ({
-                    id: Math.random().toString(36).substr(2, 9),
-                    title: s,
-                    isDone: false
+                    id: Math.random().toString(36).substr(2, 9), title: s, isDone: false
                 }));
                 const updated = [...(task.subtasks || []), ...newSubs];
-                await updateDoc(doc(db, "tasks", task.id), { subtasks: updated });
+                await tasksApi.updateStatus(task.id, { subtasks: updated });
                 onUpdate({ ...task, subtasks: updated });
             }
-        } catch (e) {
+        } catch (e: any) {
             console.error(e);
-            alert("AI subtask generation failed.");
+            alert("AI subtask generation failed: " + (e.message || "Unknown error"));
         } finally {
             setAiSubLoading(false);
         }
@@ -456,12 +433,12 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
     const handleDelete = async () => {
         if (confirm("Are you sure you want to delete this task?")) {
             try {
-                await deleteDoc(doc(db, "tasks", task.id));
+                await tasksApi.delete(task.id);
                 onDelete(task.id);
                 onClose();
-            } catch (error) {
-                console.error("Delete failed", error);
-                alert("Failed to delete task");
+            } catch (error: any) {
+                console.error("Delete failed:", error);
+                alert("Failed to delete task: " + (error.message || "Unknown error"));
             }
         }
     };
@@ -470,14 +447,15 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
         if (!user || !text.trim()) return;
         const newComment: TaskComment = {
             id: Math.random().toString(36).substr(2, 9),
-            userId: user.id,
-            userName: user.name,
-            text,
-            timestamp: Date.now()
+            userId: user.id, userName: user.name, text, timestamp: Date.now()
         };
         const updatedComments = [...(task.comments || []), newComment];
-        await updateDoc(doc(db, "tasks", task.id), { comments: updatedComments });
-        onUpdate({ ...task, comments: updatedComments });
+        try {
+          await tasksApi.updateStatus(task.id, { comments: updatedComments });
+          onUpdate({ ...task, comments: updatedComments });
+        } catch (error: any) {
+          alert("Failed to add comment: " + (error.message || "Unknown error"));
+        }
     };
 
     const watchTeamId = editForm.teamId;
@@ -502,11 +480,7 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
                                 )}
                             </div>
                             {isEditing ? (
-                                <Input 
-                                    value={editForm.title} 
-                                    onChange={e => setEditForm({...editForm, title: e.target.value})}
-                                    className="font-bold text-lg"
-                                />
+                                <Input value={editForm.title} onChange={e => setEditForm({...editForm, title: e.target.value})} className="font-bold text-lg" />
                             ) : (
                                 <h2 className="text-xl font-bold">{task.title}</h2>
                             )}
@@ -529,10 +503,8 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
                                     </>
                                 )}
                             </div>
-                            <Label className="sr-only">Status</Label>
                             <select 
-                                value={task.status} 
-                                onChange={(e) => updateStatus(e.target.value as any)}
+                                value={task.status} onChange={(e) => updateStatus(e.target.value as any)}
                                 className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm font-medium shadow-sm"
                             >
                                 {['To Do', 'In Progress', 'Testing', 'Review', 'Done'].map(s => <option key={s} value={s}>{s}</option>)}
@@ -548,17 +520,11 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
                                         <Label className="text-sm font-semibold flex items-center gap-2">
                                             <FileText className="h-4 w-4" /> Task Description (Markdown)
                                         </Label>
-                                        <Textarea 
-                                            value={editForm.description} 
-                                            onChange={e => setEditForm({...editForm, description: e.target.value})}
-                                            className="min-h-[250px]"
-                                        />
+                                        <Textarea value={editForm.description} onChange={e => setEditForm({...editForm, description: e.target.value})} className="min-h-[250px]" />
                                     </div>
                                 ) : (
                                     <div className="prose prose-sm max-w-none">
-                                        <h3 className="text-sm font-semibold text-muted-foreground flex items-center gap-2 mb-3">
-                                            <FileText className="h-4 w-4" /> Task Description
-                                        </h3>
+                                        <h3 className="text-sm font-semibold text-muted-foreground flex items-center gap-2 mb-3"><FileText className="h-4 w-4" /> Task Description</h3>
                                         <div className="markdown-body p-4 bg-slate-50 rounded-lg border min-h-[120px]" dir="auto">
                                             <ReactMarkdown>{task.description || "*No task description provided.*"}</ReactMarkdown>
                                         </div>
@@ -566,7 +532,6 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
                                 )}
                              </div>
 
-                             {/* Subtasks Section */}
                              <div className="space-y-4 pt-4 border-t">
                                 <div className="flex justify-between items-center">
                                     <h3 className="text-sm font-semibold text-muted-foreground flex items-center gap-2">
@@ -577,46 +542,25 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
                                             </span>
                                         )}
                                     </h3>
-                                    <Button 
-                                        variant="outline" 
-                                        size="sm" 
-                                        className="h-8 text-xs gap-1.5" 
-                                        onClick={generateAiSubtasks} 
-                                        disabled={aiSubLoading}
-                                    >
+                                    <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" onClick={generateAiSubtasks} disabled={aiSubLoading}>
                                         {aiSubLoading ? <Loader2 className="h-3 w-3 animate-spin"/> : <Sparkles className="h-3 w-3 text-purple-600"/>}
                                         AI Breakdown
                                     </Button>
                                 </div>
-                                
                                 <div className="space-y-2">
                                     {task.subtasks?.map(st => (
                                         <div key={st.id} className="flex items-center group gap-2 p-2 hover:bg-slate-50 rounded-md border border-transparent hover:border-slate-100 transition-colors">
                                             <button onClick={() => toggleSubTask(st.id)} className="text-slate-400 hover:text-primary transition-colors">
                                                 {st.isDone ? <CheckSquare className="h-5 w-5 text-green-600"/> : <Square className="h-5 w-5"/>}
                                             </button>
-                                            <span className={`flex-1 text-sm transition-all ${st.isDone ? 'line-through text-slate-400' : 'text-slate-700'}`} dir="auto">
-                                                {st.title}
-                                            </span>
-                                            <Button 
-                                                variant="ghost" 
-                                                size="icon" 
-                                                className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-destructive"
-                                                onClick={() => removeSubTask(st.id)}
-                                            >
+                                            <span className={`flex-1 text-sm transition-all ${st.isDone ? 'line-through text-slate-400' : 'text-slate-700'}`} dir="auto">{st.title}</span>
+                                            <Button variant="ghost" size="icon" className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-destructive" onClick={() => removeSubTask(st.id)}>
                                                 <Trash2 className="h-3 w-3"/>
                                             </Button>
                                         </div>
                                     ))}
-                                    
                                     <div className="flex gap-2 items-center pt-2">
-                                        <Input 
-                                            placeholder="Add a step manually..." 
-                                            value={newSubTask}
-                                            onChange={e => setNewSubTask(e.target.value)}
-                                            onKeyDown={e => e.key === 'Enter' && addManualSubTask()}
-                                            className="h-9 text-sm"
-                                        />
+                                        <Input placeholder="Add a step manually..." value={newSubTask} onChange={e => setNewSubTask(e.target.value)} onKeyDown={e => e.key === 'Enter' && addManualSubTask()} className="h-9 text-sm" />
                                         <Button variant="secondary" size="sm" className="h-9" onClick={addManualSubTask}><Plus className="h-4 w-4"/></Button>
                                     </div>
                                 </div>
@@ -660,8 +604,7 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
                                     }}/>
                                     <Button size="sm" onClick={() => {
                                         const el = document.getElementById(`comment-input-${task.id}`) as HTMLInputElement;
-                                        addComment(el.value);
-                                        el.value = '';
+                                        addComment(el.value); el.value = '';
                                     }}>Send</Button>
                                 </div>
                              </div>
@@ -674,33 +617,21 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
                                     <>
                                         <div className="space-y-1">
                                             <Label className="text-xs">Stack</Label>
-                                            <select 
-                                                className="w-full h-8 rounded border text-xs px-2"
-                                                value={editForm.stack}
-                                                onChange={e => setEditForm({...editForm, stack: e.target.value as any})}
-                                            >
+                                            <select className="w-full h-8 rounded border text-xs px-2" value={editForm.stack} onChange={e => setEditForm({...editForm, stack: e.target.value as any})}>
                                                 <option value="Frontend">Frontend</option>
                                                 <option value="Backend">Backend</option>
                                             </select>
                                         </div>
                                         <div className="space-y-1">
                                             <Label className="text-xs">Team</Label>
-                                            <select 
-                                                className="w-full h-8 rounded border text-xs px-2"
-                                                value={editForm.teamId}
-                                                onChange={e => setEditForm({...editForm, teamId: e.target.value, assigneeId: ''})}
-                                            >
+                                            <select className="w-full h-8 rounded border text-xs px-2" value={editForm.teamId} onChange={e => setEditForm({...editForm, teamId: e.target.value, assigneeId: ''})}>
                                                 <option value="">-- None --</option>
                                                 {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                                             </select>
                                         </div>
                                         <div className="space-y-1">
                                             <Label className="text-xs">Assignee</Label>
-                                            <select 
-                                                className="w-full h-8 rounded border text-xs px-2"
-                                                value={editForm.assigneeId}
-                                                onChange={e => setEditForm({...editForm, assigneeId: e.target.value})}
-                                            >
+                                            <select className="w-full h-8 rounded border text-xs px-2" value={editForm.assigneeId} onChange={e => setEditForm({...editForm, assigneeId: e.target.value})}>
                                                 <option value="">-- Unassigned --</option>
                                                 {availableMembers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                                             </select>
@@ -710,23 +641,16 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
                                     <>
                                         <div className="bg-white p-3 rounded-lg border shadow-sm">
                                             <div className="text-[10px] text-muted-foreground uppercase font-bold mb-1">Team</div>
-                                            <div className="font-medium flex items-center gap-2">
-                                                <UsersIcon className="h-3.5 w-3.5 text-primary" />
-                                                {teams.find(t => t.id === task.teamId)?.name || 'None'}
-                                            </div>
+                                            <div className="font-medium flex items-center gap-2"><UsersIcon className="h-3.5 w-3.5 text-primary" />{teams.find(t => t.id === task.teamId)?.name || 'None'}</div>
                                         </div>
                                         <div className="bg-white p-3 rounded-lg border shadow-sm">
                                             <div className="text-[10px] text-muted-foreground uppercase font-bold mb-1">Assignee</div>
-                                            <div className="font-medium flex items-center gap-2">
-                                                <UserIcon className="h-3.5 w-3.5 text-primary" />
-                                                {usersList.find(u => u.id === task.assigneeId)?.name || 'Unassigned'}
-                                            </div>
+                                            <div className="font-medium flex items-center gap-2"><UserIcon className="h-3.5 w-3.5 text-primary" />{usersList.find(u => u.id === task.assigneeId)?.name || 'Unassigned'}</div>
                                         </div>
                                     </>
                                 )}
                             </div>
                             
-                            {/* NEW ASSIGNMENT HISTORY SECTION */}
                             <div className="space-y-3">
                                 <span className="text-muted-foreground block text-xs uppercase font-bold tracking-tight">Assignment History</span>
                                 <div className="space-y-3">
@@ -737,35 +661,31 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
                                                 <span className="font-bold text-slate-800">{ah.assignedToName}</span>
                                             </div>
                                             <div className="flex flex-col text-[10px] text-muted-foreground">
-                                                <span className="flex items-center gap-1">Assigned by: <b>{ah.assignedByName}</b></span>
-                                                <span className="flex items-center gap-1 mt-0.5"><Clock className="h-2.5 w-2.5" /> {new Date(ah.timestamp).toLocaleString()}</span>
+                                                <span>Assigned by: <b>{ah.assignedByName}</b></span>
+                                                <span className="mt-0.5"><Clock className="h-2.5 w-2.5 inline" /> {new Date(ah.timestamp).toLocaleString()}</span>
                                             </div>
                                         </div>
                                     ))}
-                                    {(!task.assignmentHistory || task.assignmentHistory.length === 0) && (
-                                        <div className="text-[10px] text-muted-foreground italic p-2 border border-dashed rounded text-center">No assignments recorded.</div>
-                                    )}
                                 </div>
                             </div>
 
                             <div className="space-y-2">
                                 <span className="text-muted-foreground block text-xs uppercase font-bold tracking-tight">Audit</span>
                                 <div className="text-xs text-slate-600 bg-white p-3 rounded-lg border shadow-sm space-y-2">
-                                    {task.createdBy ? (
+                                    {task.createdBy && (
                                         <div>
                                             <div className="text-[10px] text-muted-foreground uppercase font-bold">Created by</div>
                                             <div className="font-medium">{task.createdBy.userName}</div>
                                             <div className="text-[10px] text-muted-foreground">{new Date(task.createdAt).toLocaleString()}</div>
                                         </div>
-                                    ) : <div className="text-muted-foreground italic">Creator not recorded</div>}
-                                    
-                                    {task.lastEditedBy ? (
+                                    )}
+                                    {task.lastEditedBy && (
                                         <div className="pt-2 border-t">
                                             <div className="text-[10px] text-muted-foreground uppercase font-bold">Last edited by</div>
                                             <div className="font-medium">{task.lastEditedBy.userName}</div>
                                             <div className="text-[10px] text-muted-foreground">{new Date(task.lastEditedBy.timestamp).toLocaleString()}</div>
                                         </div>
-                                    ) : <div className="text-muted-foreground italic pt-2 border-t">No edits recorded</div>}
+                                    )}
                                 </div>
                             </div>
 
@@ -776,12 +696,8 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
                                         <div key={i} className="relative text-xs">
                                             <div className="absolute -left-[23px] top-1 w-3 h-3 rounded-full bg-white border-2 border-primary"></div>
                                             <div className="font-bold text-slate-900">{h.status}</div>
-                                            <div className="text-muted-foreground font-medium flex items-center gap-1">
-                                                <UserIcon className="h-2.5 w-2.5" /> {h.userName}
-                                            </div>
-                                            <div className="text-[10px] text-muted-foreground flex items-center gap-1">
-                                                <Clock className="h-2.5 w-2.5" /> {new Date(h.timestamp).toLocaleString()}
-                                            </div>
+                                            <div className="text-muted-foreground font-medium flex items-center gap-1"><UserIcon className="h-2.5 w-2.5" /> {h.userName}</div>
+                                            <div className="text-[10px] text-muted-foreground flex items-center gap-1"><Clock className="h-2.5 w-2.5" /> {new Date(h.timestamp).toLocaleString()}</div>
                                         </div>
                                     ))}
                                 </div>
@@ -806,6 +722,7 @@ export const StoriesView = () => {
   const { user } = useAuth();
   const [stories, setStories] = useState<(UserStory & { backlogTitle?: string })[]>([]);
   const [tasksCache, setTasksCache] = useState<Record<string, Task[]>>({}); 
+  const [loading, setLoading] = useState(true);
   const [loadingTasks, setLoadingTasks] = useState<Record<string, boolean>>({});
   
   const [backlogs, setBacklogs] = useState<ProductBacklog[]>([]);
@@ -832,34 +749,21 @@ export const StoriesView = () => {
 
   const fetchData = async () => {
     try {
-        const [blSnap, teamSnap, userSnap] = await Promise.all([
-            getDocs(collection(db, "product_backlogs")),
-            getDocs(collection(db, "teams")),
-            getDocs(collection(db, "users"))
+        setLoading(true);
+        const [bls, sts, tms, usrs] = await Promise.all([
+            backlogsApi.getAll(),
+            storiesApi.getAll(),
+            teamsApi.getAll(),
+            usersApi.getAll()
         ]);
-
-        const bls = blSnap.docs.map(d => ({ id: d.id, ...d.data() } as ProductBacklog));
         setBacklogs(bls);
-        setTeams(teamSnap.docs.map(d => ({ id: d.id, ...d.data() } as Team)));
-        setUsersList(userSnap.docs.map(d => ({ id: d.id, ...d.data() } as User)));
-        
-        const storyPromises = bls.map(async (bl) => {
-            const snap = await getDocs(collection(db, `product_backlogs/${bl.id}/user_stories`));
-            return snap.docs.map(d => ({
-                id: d.id,
-                backlogTitle: bl.title,
-                backlogId: bl.id,
-                ...d.data()
-            } as UserStory & { backlogTitle: string }));
-        });
-
-        const storiesArrays = await Promise.all(storyPromises);
-        const allStories = storiesArrays.flat();
-
-        allStories.sort((a, b) => (a.displayId || "").localeCompare(b.displayId || "") || a.title.localeCompare(b.title));
-        setStories(allStories);
+        setStories(sts);
+        setTeams(tms);
+        setUsersList(usrs);
     } catch (e) {
         console.error("Error fetching data", e);
+    } finally {
+        setLoading(false);
     }
   };
 
@@ -875,9 +779,7 @@ export const StoriesView = () => {
     if (!tasksCache[storyId]) {
         setLoadingTasks(prev => ({ ...prev, [storyId]: true }));
         try {
-            const q = query(collection(db, "tasks"), where("userStoryId", "==", storyId));
-            const snap = await getDocs(q);
-            const loadedTasks = snap.docs.map(d => ({ id: d.id, ...d.data() } as Task));
+            const loadedTasks = await tasksApi.getByStoryId(storyId);
             setTasksCache(prev => ({ ...prev, [storyId]: loadedTasks }));
         } catch (e) {
             console.error(e);
@@ -888,46 +790,32 @@ export const StoriesView = () => {
   };
 
   const onSaveStory = async (data: any) => {
-    const { backlogId, ...rest } = data;
-    if (editingStoryId) {
-        const originalStory = stories.find(s => s.id === editingStoryId);
-        if (originalStory) {
-             await updateDoc(doc(db, `product_backlogs/${originalStory.backlogId}/user_stories`, editingStoryId), { ...rest });
-        }
-    } else {
-        const parentBacklog = backlogs.find(b => b.id === backlogId);
-        const inheritedPanel = parentBacklog?.panel || 'Admin';
-        await addDoc(collection(db, `product_backlogs/${backlogId}/user_stories`), {
-            ...rest,
-            backlogId,
-            panel: inheritedPanel
-        });
+    try {
+        const parentBacklog = backlogs.find(b => b.id === data.backlogId);
+        const payload = {
+            ...data,
+            id: editingStoryId,
+            panel: parentBacklog?.panel || 'Admin'
+        };
+        await storiesApi.save(payload);
+        setIsStoryDialogOpen(false);
+        resetStory();
+        setEditingStoryId(null);
+        fetchData();
+    } catch (e: any) {
+        alert("Failed to save story: " + (e.message || "Unknown error"));
     }
-    setIsStoryDialogOpen(false);
-    resetStory();
-    setEditingStoryId(null);
-    fetchData();
   };
 
   const onDeleteStory = async (story: UserStory, e: React.MouseEvent) => {
     e.stopPropagation();
-    if(confirm(`آیا مطمئن هستید که می‌خواهید استوری "${story.title}" را به همراه تمام تسک‌های آن حذف کنید؟`)) {
+    if(confirm(`آیا مطمئن هستید که می‌خواهید استوری "${story.title}" را حذف کنید؟`)) {
         try {
-            const batch = writeBatch(db);
-            const tasksQuery = query(collection(db, "tasks"), where("userStoryId", "==", story.id));
-            const tasksSnap = await getDocs(tasksQuery);
-            tasksSnap.docs.forEach(taskDoc => {
-              batch.delete(taskDoc.ref);
-            });
-
-            const storyRef = doc(db, `product_backlogs/${story.backlogId}/user_stories`, story.id);
-            batch.delete(storyRef);
-
-            await batch.commit();
+            await storiesApi.delete(story.id);
             fetchData();
-        } catch (err) { 
+        } catch (err: any) { 
           console.error(err);
-          alert("خطا در حذف استوری."); 
+          alert("خطا در حذف استوری: " + (err.message || "Unknown error")); 
         }
     }
   };
@@ -958,31 +846,23 @@ export const StoriesView = () => {
     const now = Date.now();
     const assignmentHistory: AssignmentHistory[] = [];
 
-    // Track initial Team assignment
     if (data.teamId) {
         assignmentHistory.push({
-            type: 'Team',
-            assignedToId: data.teamId,
+            type: 'Team', assignedToId: data.teamId,
             assignedToName: teams.find(t => t.id === data.teamId)?.name || 'Team',
-            assignedById: user?.id || 'system',
-            assignedByName: user?.name || 'System',
-            timestamp: now
+            assignedById: user?.id || 'system', assignedByName: user?.name || 'System', timestamp: now
         });
     }
 
-    // Track initial Member assignment
     if (data.assigneeId) {
         assignmentHistory.push({
-            type: 'Member',
-            assignedToId: data.assigneeId,
+            type: 'Member', assignedToId: data.assigneeId,
             assignedToName: usersList.find(u => u.id === data.assigneeId)?.name || 'User',
-            assignedById: user?.id || 'system',
-            assignedByName: user?.name || 'System',
-            timestamp: now
+            assignedById: user?.id || 'system', assignedByName: user?.name || 'System', timestamp: now
         });
     }
 
-    const newTaskData = {
+    const newTaskData: Partial<Task> = {
         title: data.title,
         description: data.description,
         status: 'To Do',
@@ -990,32 +870,24 @@ export const StoriesView = () => {
         backlogId: targetStory.backlogId,
         panel: targetStory.panel || 'Admin',
         stack: data.stack,
-        teamId: data.teamId || null,
-        assigneeId: data.assigneeId || null,
+        teamId: data.teamId || undefined,
+        assigneeId: data.assigneeId || undefined,
         createdAt: now,
-        history: [{
-            status: 'To Do',
-            timestamp: now,
-            userId: user?.id || 'system',
-            userName: user?.name || 'System'
-        }],
+        history: [{ status: 'To Do', timestamp: now, userId: user?.id || 'system', userName: user?.name || 'System' }],
         assignmentHistory: assignmentHistory,
         comments: [],
         subtasks: [],
         createdBy: user ? { userId: user.id, userName: user.name } : { userId: 'system', userName: 'System' }
     };
     
-    // @ts-ignore
-    const docRef = await addDoc(collection(db, "tasks"), newTaskData);
-    
-    const newTask = { id: docRef.id, ...newTaskData } as Task;
-    setTasksCache(prev => ({
-        ...prev,
-        [targetStory.id]: [...(prev[targetStory.id] || []), newTask]
-    }));
-
-    setIsAddTaskDialogOpen(false);
-    setExpandedStoryId(targetStory.id);
+    try {
+      const newTask = await tasksApi.save(newTaskData);
+      setTasksCache(prev => ({ ...prev, [targetStory.id]: [...(prev[targetStory.id] || []), newTask] }));
+      setIsAddTaskDialogOpen(false);
+      setExpandedStoryId(targetStory.id);
+    } catch (e: any) {
+      alert("Failed to create task: " + (e.message || "Unknown error"));
+    }
   };
 
   const generateAiTasks = async () => {
@@ -1025,31 +897,13 @@ export const StoriesView = () => {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const response = await ai.models.generateContent({
             model: 'gemini-3-flash-preview',
-            contents: `Generate technical tasks for this User Story in **Persian (Farsi)**.
-            Do NOT assume any specific programming language, library or framework (be framework-agnostic). Focus on universal technical logic and functional steps.
-            Keep the tasks practical but not overly technical.
-            
-            Story Title: ${targetStory.title}
-            Story Description: ${targetStory.description}
-            
-            Return a list of tasks. Each task must have a title and description in Persian, and a technical stack ('Frontend' or 'Backend').`,
+            contents: `Generate logical tech tasks in Persian for Story: ${targetStory.title}. JSON output.`,
             config: {
-                systemInstruction: "You are an expert Agile Developer assistant. Focus on logical technical tasks without assuming a specific stack. You speak Farsi. Generate output in JSON.",
                 responseMimeType: "application/json",
                 responseSchema: {
                     type: Type.OBJECT,
                     properties: {
-                        tasks: {
-                            type: Type.ARRAY,
-                            items: {
-                                type: Type.OBJECT,
-                                properties: {
-                                    title: { type: Type.STRING },
-                                    description: { type: Type.STRING },
-                                    stack: { type: Type.STRING, enum: ['Frontend', 'Backend'] }
-                                }
-                            }
-                        }
+                        tasks: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, description: { type: Type.STRING }, stack: { type: Type.STRING } } } }
                     }
                 }
             }
@@ -1057,51 +911,23 @@ export const StoriesView = () => {
         
         const generated = JSON.parse(cleanJson(response.text || "{}"));
         if (generated.tasks) {
-            const batch = writeBatch(db);
-            const newTasks: Task[] = [];
             const now = Date.now();
-            
-            generated.tasks.forEach((t: any) => {
-                const docRef = doc(collection(db, "tasks"));
-                const newTask: Task = {
-                    id: docRef.id,
-                    title: t.title,
-                    description: t.description,
-                    status: 'To Do',
-                    userStoryId: targetStory.id,
-                    backlogId: targetStory.backlogId,
-                    panel: targetStory.panel || 'Admin',
-                    stack: t.stack,
-                    createdAt: now,
-                    history: [{
-                        status: 'To Do',
-                        timestamp: now,
-                        userId: user?.id || 'ai',
-                        userName: user?.name || 'AI Assistant'
-                    }],
-                    assignmentHistory: [],
-                    comments: [],
-                    subtasks: [],
-                    createdBy: { userId: user?.id || 'ai', userName: user?.name || 'AI Assistant' }
-                };
-                
-                const { id, ...firestoreData } = newTask;
-                batch.set(docRef, firestoreData);
-                newTasks.push(newTask);
-            });
-            await batch.commit();
-            
-            setTasksCache(prev => ({
-                ...prev,
-                [targetStory.id]: [...(prev[targetStory.id] || []), ...newTasks]
+            const newTasksPayload = generated.tasks.map((t: any) => ({
+                title: t.title, description: t.description, status: 'To Do' as const,
+                userStoryId: targetStory.id, backlogId: targetStory.backlogId, panel: targetStory.panel || 'Admin',
+                stack: t.stack, createdAt: now,
+                history: [{ status: 'To Do', timestamp: now, userId: user?.id || 'ai', userName: user?.name || 'AI Assistant' }],
+                createdBy: { userId: user?.id || 'ai', userName: user?.name || 'AI Assistant' }
             }));
-
+            await tasksApi.bulkSave(newTasksPayload);
+            const refetchedTasks = await tasksApi.getByStoryId(targetStory.id);
+            setTasksCache(prev => ({ ...prev, [targetStory.id]: refetchedTasks }));
             setExpandedStoryId(targetStory.id);
             setIsAddTaskDialogOpen(false);
         }
-    } catch (e) {
+    } catch (e: any) {
         console.error(e);
-        alert("AI Generation failed. Check console.");
+        alert("AI Generation failed: " + (e.message || "Unknown error"));
     } finally {
         setAiLoading(false);
     }
@@ -1124,36 +950,24 @@ export const StoriesView = () => {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h2 className="text-2xl font-bold tracking-tight">User Stories</h2>
         <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2 bg-white border rounded-md px-2 py-1 shadow-sm">
-                <Filter className="h-4 w-4 text-muted-foreground" />
+            <div className="flex items-center gap-2 bg-white border rounded-md px-2 py-1 shadow-sm overflow-x-auto max-w-full">
+                <Filter className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                 <select 
                     className="text-sm border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer max-w-[150px] truncate"
                     value={filterBacklog}
                     onChange={(e) => setFilterBacklog(e.target.value)}
                 >
                     <option value="All">All Backlogs</option>
-                    {backlogs.map(b => (
-                        <option key={b.id} value={b.id}>
-                            {b.displayId ? `${b.displayId} - ` : ''}{b.title}
-                        </option>
-                    ))}
+                    {backlogs.map(b => <option key={b.id} value={b.id}>{b.displayId ? `${b.displayId} - ` : ''}{b.title}</option>)}
                 </select>
-                <div className="w-px h-4 bg-gray-200 mx-1"></div>
-                <select 
-                    className="text-sm border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer"
-                    value={filterPanel}
-                    onChange={(e) => setFilterPanel(e.target.value)}
-                >
+                <div className="w-px h-4 bg-gray-200 mx-1 flex-shrink-0"></div>
+                <select className="text-sm border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer" value={filterPanel} onChange={(e) => setFilterPanel(e.target.value)}>
                     <option value="All">All Panels</option>
                     <option value="Admin">Admin</option>
                     <option value="Customer">Customer</option>
                 </select>
-                <div className="w-px h-4 bg-gray-200 mx-1"></div>
-                <select 
-                    className="text-sm border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer"
-                    value={filterPriority}
-                    onChange={(e) => setFilterPriority(e.target.value)}
-                >
+                <div className="w-px h-4 bg-gray-200 mx-1 flex-shrink-0"></div>
+                <select className="text-sm border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer" value={filterPriority} onChange={(e) => setFilterPriority(e.target.value)}>
                     <option value="All">All Priorities</option>
                     <option value="High">High</option>
                     <option value="Medium">Medium</option>
@@ -1176,18 +990,18 @@ export const StoriesView = () => {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredStories.map(story => {
+            {loading ? (
+                Array.from({ length: 5 }).map((_, i) => <TableRow key={i} className="animate-pulse"><TableCell colSpan={6} className="h-12 bg-slate-50/50" /></TableRow>)
+            ) : filteredStories.map(story => {
               const isExpanded = expandedStoryId === story.id;
-              const isLoading = loadingTasks[story.id];
+              const isLoadingTasks = loadingTasks[story.id];
               const storyTasks = tasksCache[story.id] || [];
               const progress = calculateStoryProgress(storyTasks);
               
               return (
                 <React.Fragment key={story.id}>
                   <TableRow className={isExpanded ? "bg-muted/50 border-b-0" : "cursor-pointer"} onClick={() => toggleStory(story.id)}>
-                    <TableCell>
-                      {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                    </TableCell>
+                    <TableCell>{isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</TableCell>
                     <TableCell className="font-mono text-xs">{story.displayId || '-'}</TableCell>
                     <TableCell className="font-medium">
                         <div className="flex items-center gap-2">
@@ -1204,17 +1018,12 @@ export const StoriesView = () => {
                           <div className="text-[10px] text-muted-foreground text-center font-medium">{progress}% ({storyTasks.filter(t => t.status === 'Done').length}/{storyTasks.length} tasks)</div>
                         </div>
                       ) : (
-                        <div className="flex items-center gap-2 opacity-50">
-                           <Badge variant="outline" className="text-[10px]">{story.points} pts</Badge>
-                           <div className="h-1 w-12 bg-gray-100 rounded"></div>
-                        </div>
+                        <div className="flex items-center gap-2 opacity-50"><Badge variant="outline" className="text-[10px]">{story.points} pts</Badge><div className="h-1 w-12 bg-gray-100 rounded"></div></div>
                       )}
                     </TableCell>
                     <TableCell>
                        <div className="flex items-center gap-2">
-                            <Button variant="outline" size="sm" onClick={(e) => openAddTask(story, e)}>
-                                <ListTodo className="h-3 w-3 mr-2" /> Add Task
-                            </Button>
+                            <Button variant="outline" size="sm" onClick={(e) => openAddTask(story, e)}><ListTodo className="h-3 w-3 mr-2" /> Add Task</Button>
                             {user?.isAdmin && (
                                 <>
                                 <Button variant="ghost" size="icon" onClick={(e) => onEditStory(story, e)}><Edit2 className="h-4 w-4" /></Button>
@@ -1230,10 +1039,10 @@ export const StoriesView = () => {
                         <div className="p-4 pl-12 space-y-2">
                            <h4 className="text-sm font-semibold text-muted-foreground flex items-center gap-2">
                              <ListTodo className="h-4 w-4" /> Tasks
-                             {isLoading && <Loader2 className="h-3 w-3 animate-spin" />}
-                             {!isLoading && ` (${storyTasks.length})`}
+                             {isLoadingTasks && <Loader2 className="h-3 w-3 animate-spin" />}
+                             {!isLoadingTasks && ` (${storyTasks.length})`}
                            </h4>
-                           {isLoading ? (
+                           {isLoadingTasks ? (
                                <div className="py-4 text-center text-sm text-muted-foreground">Loading tasks...</div>
                            ) : storyTasks.length === 0 ? (
                              <p className="text-xs text-muted-foreground italic">No tasks yet.</p>
@@ -1242,10 +1051,7 @@ export const StoriesView = () => {
                                {storyTasks.map(task => (
                                  <div key={task.id} onClick={(e) => { e.stopPropagation(); setSelectedTask(task); setIsTaskDetailOpen(true); }} className="cursor-pointer group relative flex flex-col gap-2 bg-background p-3 rounded-lg border hover:border-primary transition-colors shadow-sm">
                                    <div className="flex items-center justify-between">
-                                      <div className="flex items-center gap-2">
-                                         <Badge variant="secondary" className="text-[10px]">{task.stack}</Badge>
-                                         <Badge variant="outline" className="text-[10px]">{task.panel}</Badge>
-                                      </div>
+                                      <div className="flex items-center gap-2"><Badge variant="secondary" className="text-[10px]">{task.stack}</Badge><Badge variant="outline" className="text-[10px]">{task.panel}</Badge></div>
                                       <Badge variant="outline" className={`text-[10px] ${task.status === 'Done' ? 'bg-green-100 text-green-700 border-green-200' : task.status === 'In Progress' ? 'bg-blue-100 text-blue-700 border-blue-200' : ''}`}>{task.status}</Badge>
                                    </div>
                                    <span className="font-medium text-sm line-clamp-2" dir="auto">{task.title}</span>
@@ -1264,7 +1070,6 @@ export const StoriesView = () => {
                 </React.Fragment>
               );
             })}
-            {filteredStories.length === 0 && <TableRow><TableCell colSpan={6} className="text-center">No stories found.</TableCell></TableRow>}
           </TableBody>
         </Table>
       </Card>
@@ -1307,8 +1112,6 @@ export const StoriesView = () => {
                 {aiLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Sparkles className="mr-2 h-4 w-4 text-purple-600"/>}
                 Auto-Generate Tasks with AI
             </Button>
-            <div className="relative mb-4"><div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div><div className="relative flex justify-center text-xs uppercase"><span className="bg-background px-2 text-muted-foreground">Or Manual Entry</span></div></div>
-            
             <form onSubmit={subTask(onAddTaskSubmit)} className="space-y-4">
                 <div className="space-y-2"><Label>Title</Label><Input {...regTask('title', { required: true })} /></div>
                 <div className="space-y-2"><Label>Description (Markdown)</Label><Textarea {...regTask('description')} placeholder="Supports Markdown..." /></div>
@@ -1316,27 +1119,14 @@ export const StoriesView = () => {
                     <div className="space-y-2">
                         <Label>Stack</Label>
                         <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...regTask('stack')}>
-                            <option value="Frontend">Frontend</option>
-                            <option value="Backend">Backend</option>
+                            <option value="Frontend">Frontend</option><option value="Backend">Backend</option>
                         </select>
                     </div>
                     <div className="space-y-2"><Label>Inherited Panel</Label><Input disabled value={targetStory?.panel || 'Admin'} /></div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                        <Label>Assign Team</Label>
-                        <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...regTask('teamId')}>
-                            <option value="">-- No Team --</option>
-                            {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                        </select>
-                    </div>
-                    <div className="space-y-2">
-                        <Label>Assign Member</Label>
-                        <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...regTask('assigneeId')}>
-                             <option value="">-- Unassigned --</option>
-                             {availableMembers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                        </select>
-                    </div>
+                    <div className="space-y-2"><Label>Assign Team</Label><select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...regTask('teamId')}><option value="">-- No Team --</option>{teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
+                    <div className="space-y-2"><Label>Assign Member</Label><select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...regTask('assigneeId')}><option value="">-- Unassigned --</option>{availableMembers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
                 </div>
                 <DialogFooter><Button type="submit">Create Task</Button></DialogFooter>
             </form>
@@ -1344,34 +1134,22 @@ export const StoriesView = () => {
       </Dialog>
       
       <TaskDetailModal 
-        task={selectedTask} 
-        isOpen={isTaskDetailOpen} 
-        onClose={() => setIsTaskDetailOpen(false)} 
+        task={selectedTask} isOpen={isTaskDetailOpen} onClose={() => setIsTaskDetailOpen(false)} 
         onUpdate={(updated) => {
             setSelectedTask(updated);
             setTasksCache(prev => {
-                const storyId = updated.userStoryId;
-                const tasks = prev[storyId] || [];
-                return {
-                    ...prev,
-                    [storyId]: tasks.map(t => t.id === updated.id ? updated : t)
-                };
+                const tasks = prev[updated.userStoryId] || [];
+                return { ...prev, [updated.userStoryId]: tasks.map(t => t.id === updated.id ? updated : t) };
             });
         }}
         onDelete={(id) => {
              setTasksCache(prev => {
                  if (!selectedTask) return prev;
-                 const storyId = selectedTask.userStoryId;
-                 return {
-                     ...prev,
-                     [storyId]: (prev[storyId] || []).filter(t => t.id !== id)
-                 };
+                 return { ...prev, [selectedTask.userStoryId]: (prev[selectedTask.userStoryId] || []).filter(t => t.id !== id) };
              });
              setIsTaskDetailOpen(false);
         }}
-        teams={teams}
-        usersList={usersList}
-        allStories={stories}
+        teams={teams} usersList={usersList} allStories={stories}
       />
     </div>
   );
@@ -1381,95 +1159,132 @@ export const StoriesView = () => {
 export const MilestonesView = () => {
   const { user } = useAuth();
   const [milestones, setMilestones] = useState<Milestone[]>([]);
+  const [stories, setStories] = useState<UserStory[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [loading, setLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [selectedMilestone, setSelectedMilestone] = useState<Milestone | null>(null);
+  const [selectedStoryIds, setSelectedStoryIds] = useState<string[]>([]);
   const { register, handleSubmit, reset, setValue } = useForm<Milestone>();
 
-  const fetchMilestones = async () => {
+  const fetchData = async () => {
+    setLoading(true);
     try {
-      const snap = await getDocs(collection(db, "milestones"));
-      setMilestones(snap.docs.map(d => ({ id: d.id, ...d.data() } as Milestone)));
+      const [ms, ts, sts] = await Promise.all([
+        milestonesApi.getAll(),
+        tasksApi.getAll(),
+        storiesApi.getAll()
+      ]);
+      setMilestones(ms);
+      setTasks(ts);
+      setStories(sts);
     } catch (error) {
-      console.error("Error fetching milestones:", error);
+      console.error("Error fetching milestone data:", error);
+    } finally {
+      setLoading(false);
     }
   };
 
-  useEffect(() => { fetchMilestones(); }, []);
+  useEffect(() => { fetchData(); }, []);
+
+  const calculateMilestoneProgress = (m: Milestone) => {
+    if (!m.userStoryIds || m.userStoryIds.length === 0) return 0;
+    let totalProgress = 0;
+    m.userStoryIds.forEach(sid => {
+        totalProgress += calculateStoryProgress(tasks.filter(t => t.userStoryId === sid));
+    });
+    return Math.round(totalProgress / m.userStoryIds.length);
+  };
 
   const onSubmit = async (data: any) => {
     try {
-      if (editingId) {
-        await updateDoc(doc(db, "milestones", editingId), data);
-      } else {
-        await addDoc(collection(db, "milestones"), data);
-      }
+      await milestonesApi.save({ ...data, id: editingId || undefined }, selectedStoryIds);
       setIsDialogOpen(false);
       reset();
+      setSelectedStoryIds([]);
       setEditingId(null);
-      fetchMilestones();
-    } catch (error) {
-      console.error("Error saving milestone:", error);
-      alert("Failed to save milestone.");
+      fetchData();
+    } catch (error: any) {
+      alert("Failed to save milestone: " + (error.message || "Unknown error"));
     }
   };
 
-  const onEdit = (m: Milestone) => {
+  const onEdit = (m: Milestone, e: React.MouseEvent) => {
+    e.stopPropagation();
     setEditingId(m.id);
     setValue('title', m.title);
     setValue('description', m.description);
     setValue('startDate', m.startDate);
     setValue('endDate', m.endDate);
     setValue('status', m.status);
+    setSelectedStoryIds(m.userStoryIds || []);
     setIsDialogOpen(true);
   };
 
-  const onDelete = async (id: string) => {
+  const onDelete = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
     if(confirm('Delete milestone?')) {
         try {
-          await deleteDoc(doc(db, "milestones", id));
-          fetchMilestones();
-        } catch (error) {
+          await milestonesApi.delete(id);
+          fetchData();
+        } catch (error: any) {
           console.error("Delete failed:", error);
+          alert("Failed to delete milestone: " + (error.message || "Unknown error"));
         }
     }
   };
 
+  const openDetails = (m: Milestone) => {
+    setSelectedMilestone(m);
+    setIsDetailOpen(true);
+  };
+
+  const toggleStorySelection = (sid: string) => {
+      setSelectedStoryIds(prev => prev.includes(sid) ? prev.filter(id => id !== sid) : [...prev, sid]);
+  };
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold tracking-tight">Milestones</h2>
-        {user?.isAdmin && <Button onClick={() => { setEditingId(null); reset(); setIsDialogOpen(true); }}><Plus className="mr-2 h-4 w-4" /> Add Milestone</Button>}
+        <div><h2 className="text-2xl font-bold tracking-tight">Milestones</h2><p className="text-sm text-muted-foreground">Track project goals.</p></div>
+        {user?.isAdmin && <Button onClick={() => { setEditingId(null); setSelectedStoryIds([]); reset(); setIsDialogOpen(true); }}><Plus className="mr-2 h-4 w-4" /> Add Milestone</Button>}
       </div>
-      <Card>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Title</TableHead>
-              <TableHead>Dates</TableHead>
-              <TableHead>Status</TableHead>
-              {user?.isAdmin && <TableHead className="w-[100px]">Actions</TableHead>}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+      
+      {loading ? (
+          <div className="flex h-64 items-center justify-center"><Loader2 className="h-10 w-10 animate-spin text-primary" /></div>
+      ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {milestones.map(m => (
-              <TableRow key={m.id}>
-                <TableCell className="font-medium">{m.title}</TableCell>
-                <TableCell className="text-sm text-muted-foreground">{m.startDate} - {m.endDate}</TableCell>
-                <TableCell><Badge>{m.status}</Badge></TableCell>
-                {user?.isAdmin && (
-                  <TableCell>
-                    <div className="flex space-x-2">
-                      <Button variant="ghost" size="icon" onClick={() => onEdit(m)}><Edit2 className="h-4 w-4"/></Button>
-                      <Button variant="ghost" size="icon" className="text-destructive" onClick={() => onDelete(m.id)}><Trash2 className="h-4 w-4"/></Button>
-                    </div>
-                  </TableCell>
-                )}
-              </TableRow>
+                <Card key={m.id} className="group hover:shadow-md transition-all cursor-pointer border-slate-200" onClick={() => openDetails(m)}>
+                   <CardHeader className="pb-3 flex flex-row items-start justify-between space-y-0">
+                      <div className="space-y-1">
+                        <Badge variant={m.status === 'Active' ? 'default' : m.status === 'Completed' ? 'outline' : 'secondary'} className={m.status === 'Completed' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : ''}>{m.status}</Badge>
+                        <CardTitle className="text-lg font-bold group-hover:text-primary transition-colors">{m.title}</CardTitle>
+                      </div>
+                      {user?.isAdmin && (
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => onEdit(m, e)}><Edit2 className="h-3.5 w-3.5"/></Button>
+                           <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={(e) => onDelete(m.id, e)}><Trash2 className="h-3.5 w-3.5"/></Button>
+                        </div>
+                      )}
+                   </CardHeader>
+                   <CardContent className="space-y-4">
+                      <p className="text-xs text-muted-foreground line-clamp-2 min-h-[2rem]" dir="auto">{m.description || "No description provided."}</p>
+                      <div className="flex items-center gap-4 text-[10px] font-bold text-slate-500">
+                         <div className="flex items-center gap-1"><Calendar className="h-3 w-3" /> {m.startDate}</div>
+                         <div className="flex items-center gap-1"><Clock className="h-3 w-3" /> {m.endDate}</div>
+                      </div>
+                      <div className="space-y-1.5 pt-2">
+                         <div className="flex justify-between items-center text-[10px]"><span className="font-bold text-slate-700">{calculateMilestoneProgress(m)}% Progress</span><span>{m.userStoryIds?.length || 0} Stories</span></div>
+                         <ProgressBar progress={calculateMilestoneProgress(m)} />
+                      </div>
+                   </CardContent>
+                </Card>
             ))}
-            {milestones.length === 0 && <TableRow><TableCell colSpan={4} className="text-center py-8 text-muted-foreground italic">No milestones found.</TableCell></TableRow>}
-          </TableBody>
-        </Table>
-      </Card>
+          </div>
+      )}
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogHeader><DialogTitle>{editingId ? "Edit" : "Create"} Milestone</DialogTitle></DialogHeader>
@@ -1480,17 +1295,48 @@ export const MilestonesView = () => {
             <div className="space-y-2"><Label>Start Date</Label><Input type="date" {...register('startDate')} /></div>
             <div className="space-y-2"><Label>End Date</Label><Input type="date" {...register('endDate')} /></div>
           </div>
-          <div className="space-y-2">
-            <Label>Status</Label>
-            <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...register('status')}>
-              <option value="Planned">Planned</option>
-              <option value="Active">Active</option>
-              <option value="Completed">Completed</option>
-            </select>
+          <div className="space-y-2"><Label>Link User Stories</Label>
+            <div className="max-h-48 overflow-y-auto border rounded-md p-2 bg-slate-50 space-y-1">
+               {stories.map(s => (
+                 <div key={s.id} className="flex items-center gap-2 p-1.5 hover:bg-white rounded cursor-pointer transition-colors" onClick={() => toggleStorySelection(s.id)}>
+                    <div className={`h-4 w-4 rounded border flex items-center justify-center ${selectedStoryIds.includes(s.id) ? 'bg-primary border-primary' : 'bg-white border-slate-300'}`}>{selectedStoryIds.includes(s.id) && <CheckCircle className="h-3 w-3 text-white" />}</div>
+                    <span className="text-[11px] font-bold truncate">{s.displayId ? `${s.displayId}: ` : ''}{s.title}</span>
+                 </div>
+               ))}
+            </div>
           </div>
-          <DialogFooter><Button type="submit">Save</Button></DialogFooter>
+          <div className="space-y-2"><Label>Status</Label><select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...register('status')}><option value="Planned">Planned</option><option value="Active">Active</option><option value="Completed">Completed</option></select></div>
+          <DialogFooter><Button type="submit">Save Milestone</Button></DialogFooter>
         </form>
       </Dialog>
+
+      {selectedMilestone && (
+        <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
+           <DialogHeader className="border-b pb-4 mb-4">
+              <Badge>{selectedMilestone.status}</Badge>
+              <DialogTitle className="text-2xl font-black mt-2">{selectedMilestone.title}</DialogTitle>
+           </DialogHeader>
+           <div className="space-y-6">
+              <p className="text-sm text-slate-700 bg-slate-50 p-4 rounded-lg border italic" dir="auto">{selectedMilestone.description}</p>
+              <div className="space-y-3">
+                 <Label className="text-xs font-bold uppercase tracking-widest text-slate-400">Linked Stories</Label>
+                 <div className="space-y-3 max-h-[350px] overflow-y-auto">
+                    {selectedMilestone.userStoryIds?.map(sid => {
+                       const story = stories.find(s => s.id === sid); if (!story) return null;
+                       const sProgress = calculateStoryProgress(tasks.filter(t => t.userStoryId === story.id));
+                       return (
+                         <div key={sid} className="bg-white border border-slate-100 rounded-lg p-3 shadow-sm">
+                            <div className="flex justify-between items-start mb-2"><span className="text-sm font-bold truncate">{story.title}</span><Badge variant="secondary" className="text-[10px]">{sProgress}%</Badge></div>
+                            <ProgressBar progress={sProgress} className="h-1.5" />
+                         </div>
+                       );
+                    })}
+                 </div>
+              </div>
+           </div>
+           <DialogFooter><Button variant="outline" onClick={() => setIsDetailOpen(false)}>Close</Button></DialogFooter>
+        </Dialog>
+      )}
     </div>
   );
 };
@@ -1506,13 +1352,10 @@ export const TasksView = () => {
   const [teams, setTeams] = useState<Team[]>([]);
   const [usersList, setUsersList] = useState<User[]>([]);
   const [allStories, setAllStories] = useState<UserStory[]>([]);
-  
   const { register: regCreate, handleSubmit: subCreate, reset: resetCreate, watch: watchCreate, setValue: setValueCreate } = useForm<Task>();
 
-  // Filter States
   const [filterTeam, setFilterTeam] = useState<string>('All');
   const [filterStack, setFilterStack] = useState<string>('All');
-  const [filterStatus, setFilterStatus] = useState<string>('All');
   const [filterAssignee, setFilterAssignee] = useState<string>('All');
   const [filterPanel, setFilterPanel] = useState<string>('All');
   const [filterStory, setFilterStory] = useState<string>('All');
@@ -1522,30 +1365,16 @@ export const TasksView = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [tasksSnap, teamsSnap, usersSnap] = await Promise.all([
-        getDocs(collection(db, "tasks")),
-        getDocs(collection(db, "teams")),
-        getDocs(collection(db, "users"))
+      const [ts, tms, usrs, sts] = await Promise.all([
+        tasksApi.getAll(),
+        teamsApi.getAll(),
+        usersApi.getAll(),
+        storiesApi.getAll()
       ]);
-
-      setTasks(tasksSnap.docs.map(d => ({ id: d.id, ...d.data() } as Task)));
-      setTeams(teamsSnap.docs.map(d => ({ id: d.id, ...d.data() } as Team)));
-      setUsersList(usersSnap.docs.map(d => ({ id: d.id, ...d.data() } as User)));
-      
-      const blSnap = await getDocs(collection(db, "product_backlogs"));
-      const storyPromises = blSnap.docs.map(async (bl) => {
-          const snap = await getDocs(collection(db, `product_backlogs/${bl.id}/user_stories`));
-          return snap.docs.map(d => ({
-              id: d.id,
-              backlogId: bl.id,
-              ...d.data()
-          } as UserStory));
-      });
-
-      const storiesArrays = await Promise.all(storyPromises);
-      const flatStories = storiesArrays.flat();
-      flatStories.sort((a, b) => (a.displayId || "").localeCompare(b.displayId || "") || a.title.localeCompare(b.title));
-      setAllStories(flatStories);
+      setTasks(ts);
+      setTeams(tms);
+      setUsersList(usrs);
+      setAllStories(sts);
     } catch (e) {
       console.error("Error fetching tasks view data", e);
     } finally {
@@ -1555,13 +1384,8 @@ export const TasksView = () => {
 
   useEffect(() => { fetchData(); }, []);
 
-  const handleDragStart = (e: React.DragEvent, taskId: string) => {
-    e.dataTransfer.setData('taskId', taskId);
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-  };
+  const handleDragStart = (e: React.DragEvent, taskId: string) => e.dataTransfer.setData('taskId', taskId);
+  const handleDragOver = (e: React.DragEvent) => e.preventDefault();
 
   const handleDrop = async (e: React.DragEvent, newStatus: Task['status']) => {
     e.preventDefault();
@@ -1569,189 +1393,69 @@ export const TasksView = () => {
     const taskToUpdate = tasks.find(t => t.id === taskId);
     
     if (taskToUpdate && taskToUpdate.status !== newStatus && user) {
-        // Optimistic UI Update
         const oldStatus = taskToUpdate.status;
         setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus } : t));
-
         try {
-            const now = Date.now();
-            const updates: any = { 
+            const updates: Partial<Task> = { 
                 status: newStatus,
-                history: [...(taskToUpdate.history || []), { status: newStatus, timestamp: now, userId: user.id, userName: user.name }]
+                history: [...(taskToUpdate.history || []), { status: newStatus, timestamp: Date.now(), userId: user.id, userName: user.name }]
             };
-            if (newStatus === 'In Progress' && !taskToUpdate.startTime) updates.startTime = now;
-            if (newStatus === 'Done') updates.endTime = now;
-            
-            await updateDoc(doc(db, "tasks", taskId), updates);
-        } catch (error) {
-            console.error("Drop update failed", error);
-            // Revert on error
+            if (newStatus === 'In Progress' && !taskToUpdate.startTime) updates.startTime = Date.now();
+            if (newStatus === 'Done') updates.endTime = Date.now();
+            await tasksApi.updateStatus(taskId, updates);
+        } catch (error: any) {
+            console.error("Drop status update failed:", error);
             setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: oldStatus } : t));
+            alert("Failed to update status: " + (error.message || "Unknown error"));
         }
     }
   };
 
   const onManualCreateSubmit = async (data: any) => {
-    const storyId = data.userStoryId;
-    const parentStory = allStories.find(s => s.id === storyId);
+    const parentStory = allStories.find(s => s.id === data.userStoryId);
     if (!parentStory) return;
 
     const now = Date.now();
-    const assignmentHistory: AssignmentHistory[] = [];
-
-    if (data.teamId) {
-        assignmentHistory.push({
-            type: 'Team',
-            assignedToId: data.teamId,
-            assignedToName: teams.find(t => t.id === data.teamId)?.name || 'Team',
-            assignedById: user?.id || 'system',
-            assignedByName: user?.name || 'System',
-            timestamp: now
-        });
-    }
-
-    if (data.assigneeId) {
-        assignmentHistory.push({
-            type: 'Member',
-            assignedToId: data.assigneeId,
-            assignedToName: usersList.find(u => u.id === data.assigneeId)?.name || 'User',
-            assignedById: user?.id || 'system',
-            assignedByName: user?.name || 'System',
-            timestamp: now
-        });
-    }
-
-    const newTaskData = {
-        title: data.title,
-        description: data.description || '',
-        status: 'To Do',
-        userStoryId: storyId,
-        backlogId: parentStory.backlogId,
-        panel: parentStory.panel || 'Admin',
-        stack: data.stack,
-        teamId: data.teamId || null,
-        assigneeId: data.assigneeId || null,
-        createdAt: now,
-        history: [{
-            status: 'To Do',
-            timestamp: now,
-            userId: user?.id || 'system',
-            userName: user?.name || 'System'
-        }],
-        assignmentHistory: assignmentHistory,
-        comments: [],
-        subtasks: [],
+    const newTaskData: Partial<Task> = {
+        ...data, status: 'To Do', backlogId: parentStory.backlogId, panel: parentStory.panel || 'Admin',
+        createdAt: now, history: [{ status: 'To Do', timestamp: now, userId: user?.id || 'system', userName: user?.name || 'System' }],
         createdBy: user ? { userId: user.id, userName: user.name } : { userId: 'system', userName: 'System' }
     };
     
     try {
-        const docRef = await addDoc(collection(db, "tasks"), newTaskData);
-        const newTask = { id: docRef.id, ...newTaskData } as Task;
+        const newTask = await tasksApi.save(newTaskData);
         setTasks(prev => [...prev, newTask]);
-        setIsCreateDialogOpen(false);
-        resetCreate();
-    } catch (e) {
-        console.error(e);
-        alert("Failed to create task");
+        setIsCreateDialogOpen(false); resetCreate();
+    } catch (e: any) {
+        console.error("Task creation failed:", e);
+        alert("Failed to create task: " + (e.message || "Unknown error"));
     }
   };
 
   const watchTeam = watchCreate('teamId');
-  const availableMembers = watchTeam 
-      ? usersList.filter(u => teams.find(t => t.id === watchTeam)?.memberIds.includes(u.id))
-      : [];
+  const availableMembers = watchTeam ? usersList.filter(u => teams.find(t => t.id === watchTeam)?.memberIds.includes(u.id)) : [];
 
   const filteredTasks = tasks.filter(task => {
       const matchTeam = filterTeam === 'All' || task.teamId === filterTeam;
       const matchStack = filterStack === 'All' || task.stack === filterStack;
-      const matchStatus = filterStatus === 'All' || task.status === filterStatus;
       const matchAssignee = filterAssignee === 'All' || task.assigneeId === filterAssignee;
       const matchPanel = filterPanel === 'All' || task.panel === filterPanel;
       const matchStory = filterStory === 'All' || task.userStoryId === filterStory;
-      return matchTeam && matchStack && matchStatus && matchAssignee && matchPanel && matchStory;
+      return matchTeam && matchStack && matchAssignee && matchPanel && matchStory;
   });
 
   return (
     <div className="space-y-4 h-[calc(100vh-180px)] flex flex-col">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 flex-shrink-0">
-        <div className="flex items-center gap-4">
-            <h2 className="text-2xl font-bold tracking-tight">Project Board</h2>
-            <Button size="sm" onClick={() => { resetCreate(); setValueCreate('stack', 'Frontend'); setIsCreateDialogOpen(true); }}>
-                <Plus className="mr-2 h-4 w-4" /> Create Task
-            </Button>
-        </div>
-        
-        {/* Advanced Filters */}
+        <div className="flex items-center gap-4"><h2 className="text-2xl font-bold tracking-tight">Project Board</h2><Button size="sm" onClick={() => { resetCreate(); setValueCreate('stack', 'Frontend'); setIsCreateDialogOpen(true); }}><Plus className="mr-2 h-4 w-4" /> Create Task</Button></div>
         <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2 bg-white border rounded-md px-2 py-1 shadow-sm overflow-x-auto max-w-full">
-                <Filter className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                
-                <select 
-                    className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer min-w-[120px] max-w-[200px]"
-                    value={filterStory}
-                    onChange={(e) => setFilterStory(e.target.value)}
-                >
-                    <option value="All">All Stories</option>
-                    {allStories.map(s => <option key={s.id} value={s.id}>{s.displayId ? `${s.displayId}: ` : ''}{s.title}</option>)}
-                </select>
-
+            <div className="flex items-center gap-2 bg-white border rounded-md px-2 py-1 shadow-sm overflow-x-auto max-w-full"><Filter className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                <select className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer" value={filterStory} onChange={(e) => setFilterStory(e.target.value)}><option value="All">All Stories</option>{allStories.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}</select>
                 <div className="w-px h-4 bg-gray-200 mx-1 flex-shrink-0"></div>
-
-                <select 
-                    className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer min-w-[80px]"
-                    value={filterTeam}
-                    onChange={(e) => setFilterTeam(e.target.value)}
-                >
-                    <option value="All">All Teams</option>
-                    {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
-                
+                <select className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer" value={filterTeam} onChange={(e) => setFilterTeam(e.target.value)}><option value="All">All Teams</option>{teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
                 <div className="w-px h-4 bg-gray-200 mx-1 flex-shrink-0"></div>
-
-                <select 
-                    className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer"
-                    value={filterStack}
-                    onChange={(e) => setFilterStack(e.target.value)}
-                >
-                    <option value="All">All Stacks</option>
-                    <option value="Frontend">Frontend</option>
-                    <option value="Backend">Backend</option>
-                </select>
-
-                <div className="w-px h-4 bg-gray-200 mx-1 flex-shrink-0"></div>
-
-                <select 
-                    className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer min-w-[100px]"
-                    value={filterAssignee}
-                    onChange={(e) => setFilterAssignee(e.target.value)}
-                >
-                    <option value="All">All Assignees</option>
-                    {usersList.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                </select>
-
-                <div className="w-px h-4 bg-gray-200 mx-1 flex-shrink-0"></div>
-
-                <select 
-                    className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer"
-                    value={filterPanel}
-                    onChange={(e) => setFilterPanel(e.target.value)}
-                >
-                    <option value="All">All Panels</option>
-                    <option value="Admin">Admin</option>
-                    <option value="Customer">Customer</option>
-                </select>
+                <select className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer" value={filterStack} onChange={(e) => setFilterStack(e.target.value)}><option value="All">All Stacks</option><option value="Frontend">Frontend</option><option value="Backend">Backend</option></select>
             </div>
-            
-            <Button variant="outline" size="sm" onClick={() => {
-                setFilterTeam('All');
-                setFilterStack('All');
-                setFilterStatus('All');
-                setFilterAssignee('All');
-                setFilterPanel('All');
-                setFilterStory('All');
-            }} title="Reset Filters">
-                <X className="h-4 w-4" />
-            </Button>
         </div>
       </div>
 
@@ -1760,142 +1464,43 @@ export const TasksView = () => {
       ) : (
           <div className="flex-1 flex gap-4 overflow-x-auto pb-4 items-start pt-2">
             {STATUSES.map(status => (
-                <div 
-                    key={status} 
-                    className="flex-shrink-0 w-80 bg-slate-100/50 rounded-xl flex flex-col max-h-full border border-slate-200"
-                    onDragOver={handleDragOver}
-                    onDrop={(e) => handleDrop(e, status)}
-                >
-                    <div className="p-3 border-b flex items-center justify-between bg-slate-50/50 rounded-t-xl">
-                        <div className="flex items-center gap-2">
-                            <span className="font-bold text-sm text-slate-700">{status}</span>
-                            <Badge variant="secondary" className="text-[10px] h-5 bg-white border-slate-200 text-slate-600">
-                                {filteredTasks.filter(t => t.status === status).length}
-                            </Badge>
-                        </div>
-                    </div>
-                    
+                <div key={status} className="flex-shrink-0 w-80 bg-slate-100/50 rounded-xl flex flex-col max-h-full border border-slate-200" onDragOver={handleDragOver} onDrop={(e) => handleDrop(e, status)}>
+                    <div className="p-3 border-b flex items-center justify-between bg-slate-50/50 rounded-t-xl"><span className="font-bold text-sm text-slate-700">{status}</span><Badge variant="secondary" className="text-[10px] bg-white">{filteredTasks.filter(t => t.status === status).length}</Badge></div>
                     <div className="flex-1 overflow-y-auto p-3 space-y-3">
                         {filteredTasks.filter(t => t.status === status).map(task => (
-                            <div 
-                                key={task.id}
-                                draggable
-                                onDragStart={(e) => handleDragStart(e, task.id)}
-                                onClick={() => { setSelectedTask(task); setIsTaskDetailOpen(true); }}
-                                className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm hover:shadow-md hover:border-primary transition-all cursor-grab active:cursor-grabbing group relative"
-                            >
-                                <div className="flex items-start justify-between mb-2">
-                                    <div className="flex flex-wrap gap-1">
-                                        <Badge variant="outline" className="text-[9px] h-4 font-normal opacity-70">{task.panel}</Badge>
-                                        <Badge variant="secondary" className="text-[9px] h-4 font-normal">{task.stack}</Badge>
-                                    </div>
-                                    <GripVertical className="h-3 w-3 text-slate-300 group-hover:text-slate-400" />
-                                </div>
-                                
+                            <div key={task.id} draggable onDragStart={(e) => handleDragStart(e, task.id)} onClick={() => { setSelectedTask(task); setIsTaskDetailOpen(true); }} className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm hover:shadow-md hover:border-primary transition-all cursor-grab group">
+                                <div className="flex items-start justify-between mb-2"><Badge variant="outline" className="text-[9px]">{task.panel}</Badge><GripVertical className="h-3 w-3 text-slate-300" /></div>
                                 <h3 className="text-sm font-bold text-slate-800 leading-tight mb-2 line-clamp-2" dir="auto">{task.title}</h3>
-                                
-                                <div className="text-[10px] text-muted-foreground truncate mb-3 bg-slate-50 p-1 rounded border border-slate-100 italic">
-                                    {allStories.find(s => s.id === task.userStoryId)?.title || 'No Story context'}
-                                </div>
-                                
                                 <div className="flex items-center justify-between mt-auto pt-2 border-t border-slate-50">
-                                    <div className="flex items-center gap-1.5 text-slate-600">
-                                        <div className="h-5 w-5 rounded-full bg-primary/10 flex items-center justify-center">
-                                            <UserIcon className="h-3 w-3 text-primary" />
-                                        </div>
-                                        <span className="text-[10px] font-medium">
-                                            {usersList.find(u => u.id === task.assigneeId)?.name || <span className="opacity-50 italic font-normal">Unassigned</span>}
-                                        </span>
-                                    </div>
-                                    {task.comments && task.comments.length > 0 && (
-                                        <div className="flex items-center gap-1 text-slate-400">
-                                            <MessageSquare className="h-3 w-3" />
-                                            <span className="text-[10px] font-medium">{task.comments.length}</span>
-                                        </div>
-                                    )}
+                                    <div className="flex items-center gap-1.5 text-slate-600"><div className="h-5 w-5 rounded-full bg-primary/10 flex items-center justify-center"><UserIcon className="h-3 w-3 text-primary" /></div><span className="text-[10px] font-medium">{usersList.find(u => u.id === task.assigneeId)?.name || 'Unassigned'}</span></div>
                                 </div>
                             </div>
                         ))}
-                        {filteredTasks.filter(t => t.status === status).length === 0 && (
-                            <div className="border-2 border-dashed border-slate-200 rounded-lg p-8 flex flex-col items-center justify-center opacity-40">
-                                <div className="text-xs font-medium text-slate-400">Drop tasks here</div>
-                            </div>
-                        )}
                     </div>
                 </div>
             ))}
           </div>
       )}
 
-      {/* Manual Task Creation Dialog */}
       <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
         <DialogHeader><DialogTitle>Create New Task</DialogTitle></DialogHeader>
         <form onSubmit={subCreate(onManualCreateSubmit)} className="space-y-4 py-4">
-            <div className="space-y-2">
-                <Label>Parent User Story</Label>
-                <select 
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" 
-                    {...regCreate('userStoryId', { required: true })}
-                >
-                    <option value="">-- Select Story --</option>
-                    {allStories.map(s => <option key={s.id} value={s.id}>{s.displayId ? `${s.displayId}: ` : ''}{s.title}</option>)}
-                </select>
-            </div>
-            <div className="space-y-2">
-                <Label>Title</Label>
-                <Input {...regCreate('title', { required: true })} placeholder="Task title..." />
-            </div>
-            <div className="space-y-2">
-                <Label>Description (Markdown)</Label>
-                <Textarea {...regCreate('description')} placeholder="Supports Markdown..." />
-            </div>
+            <div className="space-y-2"><Label>Parent Story</Label><select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...regCreate('userStoryId', { required: true })}><option value="">-- Select Story --</option>{allStories.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}</select></div>
+            <div className="space-y-2"><Label>Title</Label><Input {...regCreate('title', { required: true })} /></div>
+            <div className="space-y-2"><Label>Description</Label><Textarea {...regCreate('description')} /></div>
             <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                    <Label>Stack</Label>
-                    <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...regCreate('stack')}>
-                        <option value="Frontend">Frontend</option>
-                        <option value="Backend">Backend</option>
-                    </select>
-                </div>
+                <div className="space-y-2"><Label>Stack</Label><select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...regCreate('stack')}><option value="Frontend">Frontend</option><option value="Backend">Backend</option></select></div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                    <Label>Assign Team</Label>
-                    <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...regCreate('teamId')}>
-                        <option value="">-- No Team --</option>
-                        {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                    </select>
-                </div>
-                <div className="space-y-2">
-                    <Label>Assign Member</Label>
-                    <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...regCreate('assigneeId')}>
-                            <option value="">-- Unassigned --</option>
-                            {availableMembers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                    </select>
-                </div>
-            </div>
-            <DialogFooter>
-                <Button type="submit">Create Task</Button>
-            </DialogFooter>
+            <DialogFooter><Button type="submit">Create Task</Button></DialogFooter>
         </form>
       </Dialog>
 
       {selectedTask && (
           <TaskDetailModal 
-            task={selectedTask} 
-            isOpen={isTaskDetailOpen} 
-            onClose={() => setIsTaskDetailOpen(false)} 
-            onUpdate={(updated) => {
-                setTasks(prev => prev.map(t => t.id === updated.id ? updated : t));
-                setSelectedTask(updated);
-            }}
-            onDelete={(id) => {
-                setTasks(prev => prev.filter(t => t.id !== id));
-                setIsTaskDetailOpen(false);
-            }}
-            teams={teams}
-            usersList={usersList}
-            allStories={allStories}
+            task={selectedTask} isOpen={isTaskDetailOpen} onClose={() => setIsTaskDetailOpen(false)} 
+            onUpdate={(updated) => { setTasks(prev => prev.map(t => t.id === updated.id ? updated : t)); setSelectedTask(updated); }}
+            onDelete={(id) => { setTasks(prev => prev.filter(t => t.id !== id)); setIsTaskDetailOpen(false); }}
+            teams={teams} usersList={usersList} allStories={allStories}
           />
       )}
     </div>

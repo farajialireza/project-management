@@ -4,6 +4,7 @@ export interface User {
   name: string;
   email: string;
   isAdmin: boolean;
+  gitlabToken?: string;
 }
 
 export interface Team {
@@ -13,6 +14,7 @@ export interface Team {
   leaderId: string;
   memberIds: string[];
   repositories: string[];
+  gitlabProjectId?: string; // New: GitLab Integration
 }
 
 export interface ProductBacklog {
@@ -36,7 +38,9 @@ export interface UserStory {
   role?: string;
   displayId?: string;
   panel?: 'Admin' | 'Customer';
-  createdAt?: number; // Added for Lead Time analysis
+  createdAt?: number;
+  // Added milestoneId to support story-milestone relationship and fix type errors in API
+  milestoneId?: string;
 }
 
 export interface Milestone {
@@ -79,6 +83,14 @@ export interface SubTask {
   isDone: boolean;
 }
 
+export interface LinkedCommit {
+  hash: string;
+  title: string;
+  author: string;
+  date: string;
+  url: string;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -94,17 +106,18 @@ export interface Task {
 
   // Attributes
   stack: 'Frontend' | 'Backend';
-  panel: 'Admin' | 'Customer'; // Inherited from Story
+  panel: 'Admin' | 'Customer'; 
   
   // Tracking
   createdAt: number;
-  startTime?: number; // First transition to In Progress
-  endTime?: number; // Transition to Done
+  startTime?: number; 
+  endTime?: number; 
   
   history?: TaskHistory[];
   assignmentHistory?: AssignmentHistory[];
   comments?: TaskComment[];
   subtasks?: SubTask[];
+  linkedCommits?: LinkedCommit[]; // New: Version Control Integration
   
   // Audit
   createdBy?: { userId: string; userName: string; };

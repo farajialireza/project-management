@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { useAuth } from '../App';
-import { auth } from '../firebase';
+import { supabase } from '../lib/supabase';
 import { Button } from './ui';
 import { LogOut, Layout, Book, Milestone, CheckSquare, Users, Settings, Bot, BarChart3 } from 'lucide-react';
 import { BacklogsView, StoriesView, MilestonesView, TasksView } from './features/ProjectViews';
@@ -24,7 +24,7 @@ export const Dashboard = () => {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('backlogs');
 
-  const handleLogout = () => auth.signOut();
+  const handleLogout = () => supabase.auth.signOut();
 
   const ActiveComponent = TABS.find(t => t.id === activeTab)?.component || BacklogsView;
 

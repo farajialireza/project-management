@@ -165,12 +165,14 @@ export const DialogFooter = ({ className, ...props }: React.HTMLAttributes<HTMLD
 );
 
 // Switch
-export const Switch = ({ checked, onCheckedChange }: { checked: boolean; onCheckedChange: (c: boolean) => void }) => (
+// Added disabled prop to the Switch component and updated the type definition to resolve property assignment errors.
+export const Switch = ({ checked, onCheckedChange, disabled }: { checked: boolean; onCheckedChange: (c: boolean) => void; disabled?: boolean }) => (
   <button
     type="button"
     role="switch"
     aria-checked={checked}
-    onClick={() => onCheckedChange(!checked)}
+    disabled={disabled}
+    onClick={() => !disabled && onCheckedChange(!checked)}
     className={cn(
       "peer inline-flex h-[24px] w-[44px] shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50",
       checked ? "bg-primary" : "bg-input"

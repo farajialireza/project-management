@@ -1,7 +1,7 @@
+
 import React, { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { doc, setDoc } from 'firebase/firestore';
-import { auth, db } from '../firebase';
+import { supabase } from '../lib/supabase';
 import { Button, Input, Label, Card, CardContent, CardHeader, CardTitle } from './ui';
 
 export const Auth = () => {
@@ -13,22 +13,24 @@ export const Auth = () => {
     setLoading(true);
     try {
       if (isLogin) {
-        await auth.signInWithEmailAndPassword(data.email, data.password);
+        const { error } = await supabase.auth.signInWithPassword({
+          email: data.email,
+          password: data.password,
+        });
+        if (error) throw error;
       } else {
-        // Sign Up
-        const cred = await auth.createUserWithEmailAndPassword(data.email, data.password);
-        if (cred.user) {
-            await cred.user.updateProfile({ displayName: data.name });
-            
-            // Create User Document
-            const isAdmin = data.email === 'realovatsug@gmail.com';
-            await setDoc(doc(db, "users", cred.user.uid), {
-              id: cred.user.uid,
-              name: data.name,
-              email: data.email,
-              isAdmin: isAdmin
-            });
-        }
+        // Sign Up with full name in metadata
+        const { error } = await supabase.auth.signUp({
+          email: data.email,
+          password: data.password,
+          options: {
+            data: {
+              full_name: data.name
+            }
+          }
+        });
+        if (error) throw error;
+        alert("Check your email for confirmation link!");
       }
     } catch (e: any) {
       setError('root', { message: e.message });

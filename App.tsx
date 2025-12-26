@@ -1,6 +1,6 @@
+
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { auth, db } from './firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { supabase } from './lib/supabase';
 import { User } from './types';
 import { Auth } from './components/Auth';
 import { Dashboard } from './components/Dashboard';
@@ -17,41 +17,66 @@ const App = () => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    // Firebase compat version uses onAuthStateChanged
-    const unsubscribe = auth.onAuthStateChanged(async (firebaseUser) => {
-      setLoading(true);
-      if (firebaseUser) {
-        try {
-          const userDoc = await getDoc(doc(db, "users", firebaseUser.uid));
-          if (userDoc.exists()) {
-            setUser(userDoc.data() as User);
-          } else {
-            // Fallback for new users or missing docs
-            setUser({
-              id: firebaseUser.uid,
-              name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
-              email: firebaseUser.email || '',
-              isAdmin: firebaseUser.email === 'realovatsug@gmail.com'
-            });
-          }
-        } catch (error) {
-          console.error("Error fetching user profile:", error);
-          // Still set a basic user object if doc fetch fails but auth exists
-          setUser({
-            id: firebaseUser.uid,
-            name: firebaseUser.displayName || 'User',
-            email: firebaseUser.email || '',
-            isAdmin: firebaseUser.email === 'realovatsug@gmail.com'
-          });
-        }
+  const fetchProfile = async (uid: string, email: string, displayName?: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', uid)
+        .single();
+
+      if (data && !error) {
+        setUser(data as User);
       } else {
+        // Fallback if record doesn't exist yet (Trigger delay)
+        setUser({
+          id: uid,
+          name: displayName || email.split('@')[0] || 'User',
+          email: email,
+          isAdmin: email === 'realovatsug@gmail.com'
+        });
+      }
+    } catch (error) {
+      console.error("Error fetching user profile:", error);
+    }
+  };
+
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          await fetchProfile(
+            session.user.id, 
+            session.user.email!, 
+            session.user.user_metadata?.full_name
+          );
+        }
+      } catch (err) {
+        console.error("Supabase Auth Initialization failed:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    initAuth();
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' && session) {
+        setLoading(true);
+        await fetchProfile(
+          session.user.id, 
+          session.user.email!, 
+          session.user.user_metadata?.full_name
+        );
+        setLoading(false);
+      } else if (event === 'SIGNED_OUT') {
         setUser(null);
       }
-      setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => subscription.unsubscribe();
   }, []);
 
   if (loading) {
