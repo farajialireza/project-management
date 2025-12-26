@@ -4,9 +4,9 @@ import { Card, CardHeader, CardTitle, CardContent, Badge, Button } from '../ui';
 import { Task, UserStory, Milestone } from '../../types';
 import { 
   Timer, Zap, TrendingUp, Activity, Sparkles, BrainCircuit, Target, Loader2, 
-  ShieldCheck, Flame, Clock, BarChart, ChevronRight, AlertCircle, Layers, Info
+  Clock, Info, BarChartHorizontal, CheckCircle2
 } from 'lucide-react';
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import ReactMarkdown from 'react-markdown';
 import { storiesApi, tasksApi, milestonesApi } from '../../api/project';
 import { calculateDoraMetrics, formatMs } from '../../utils/analytics';
@@ -68,7 +68,7 @@ export const AnalyticsView = () => {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Analyze these SEI metrics: ${JSON.stringify(metrics)}. Tasks: ${JSON.stringify(data.tasks.slice(0, 20))}. Provide a professional engineering summary in Persian.`,
+        contents: `Analyze these SEI metrics: ${JSON.stringify(metrics)}. Provide a professional engineering audit in Persian.`,
       });
       setAiSummary(response.text || "");
     } catch (e) { alert("AI Audit failed."); } finally { setAiLoading(false); }
@@ -85,54 +85,13 @@ export const AnalyticsView = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-        {/* Lead Time */}
-        <Card className="bg-blue-50/30 border-blue-100 group relative cursor-help" title="زمان از لحظه تعریف تسک تا اتمام آن (Lead Time). نشان‌دهنده سرعت کل فرآیند تحویل است. بر حسب روز و ساعت.">
-            <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
-                <CardTitle className="text-[10px] font-black text-blue-600 uppercase tracking-widest flex items-center gap-1.5"><Timer className="h-3 w-3"/> Lead Time</CardTitle>
-                <Info className="h-3 w-3 text-blue-300 opacity-0 group-hover:opacity-100 transition-opacity" />
-            </CardHeader>
-            <CardContent>
-                <div className="text-2xl font-black text-blue-900">{formatMs(metrics.avgLeadTime)}</div>
-                <p className="text-[10px] text-blue-600 font-bold mt-1">Creation to Delivery</p>
-            </CardContent>
-        </Card>
-
-        {/* Throughput */}
-        <Card className="bg-emerald-50/30 border-emerald-100 group relative cursor-help" title="تعداد تسک‌های انجام شده در ۷ روز گذشته (Throughput). نشان‌دهنده ظرفیت خروجی تیم است. بر حسب تعداد تسک.">
-            <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
-                <CardTitle className="text-[10px] font-black text-emerald-600 uppercase tracking-widest flex items-center gap-1.5"><Zap className="h-3 w-3"/> Throughput</CardTitle>
-                <Info className="h-3 w-3 text-emerald-300 opacity-0 group-hover:opacity-100 transition-opacity" />
-            </CardHeader>
-            <CardContent>
-                <div className="text-2xl font-black text-emerald-900">{metrics.throughput} <span className="text-xs font-normal">tasks</span></div>
-                <p className="text-[10px] text-emerald-600 font-bold mt-1">Completed last 7 days</p>
-            </CardContent>
-        </Card>
-
-        {/* Cycle Time */}
-        <Card className="bg-amber-50/30 border-amber-100 group relative cursor-help" title="زمان صرف شده روی تسک از لحظه شروع تا اتمام (Cycle Time). نشان‌دهنده سرعت خالص توسعه است. بر حسب روز و ساعت.">
-            <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
-                <CardTitle className="text-[10px] font-black text-amber-600 uppercase tracking-widest flex items-center gap-1.5"><Clock className="h-3 w-3"/> Cycle Time</CardTitle>
-                <Info className="h-3 w-3 text-amber-300 opacity-0 group-hover:opacity-100 transition-opacity" />
-            </CardHeader>
-            <CardContent>
-                <div className="text-2xl font-black text-amber-900">{formatMs(metrics.avgCycleTime)}</div>
-                <p className="text-[10px] text-amber-600 font-bold mt-1">In-Progress to Done</p>
-            </CardContent>
-        </Card>
-
-        {/* Velocity */}
-        <Card className="bg-purple-50/30 border-purple-100 group relative cursor-help" title="مجموع امتیازهای پیچیدگی (Story Points) تکمیل شده. نشان‌دهنده حجم کار فنی تحویل داده شده. بر حسب امتیاز.">
-            <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
-                <CardTitle className="text-[10px] font-black text-purple-600 uppercase tracking-widest flex items-center gap-1.5"><TrendingUp className="h-3 w-3"/> Velocity</CardTitle>
-                <Info className="h-3 w-3 text-purple-300 opacity-0 group-hover:opacity-100 transition-opacity" />
-            </CardHeader>
-            <CardContent>
-                <div className="text-2xl font-black text-purple-900">{metrics.completedPoints} <span className="text-xs font-normal">pts</span></div>
-                <p className="text-[10px] text-purple-600 font-bold mt-1">Total Story Points delivered</p>
-            </CardContent>
-        </Card>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
+        <MetricCard title="Lead Time" value={formatMs(metrics.avgLeadTime)} icon={<Timer className="h-3 w-3"/>} color="blue" tip="زمان کل از تعریف تا اتمام تسک." />
+        <MetricCard title="Cycle Time" value={formatMs(metrics.avgCycleTime)} icon={<Clock className="h-3 w-3"/>} color="amber" tip="زمان خالص کار روی تسک." />
+        <MetricCard title="Efficiency" value={`${metrics.flowEfficiency.toFixed(1)}%`} icon={<BarChartHorizontal className="h-3 w-3"/>} color="rose" tip="نسبت زمان خالص کار به زمان کل." />
+        <MetricCard title="Predictability" value={`${metrics.predictabilityScore.toFixed(0)}%`} icon={<CheckCircle2 className="h-3 w-3"/>} color="indigo" tip="همخوانی تخمین‌ها (Story Points) با زمان واقعی انجام کار." />
+        <MetricCard title="Throughput" value={metrics.throughput} icon={<Zap className="h-3 w-3"/>} color="emerald" tip="تعداد تسک‌های انجام شده در ۷ روز اخیر." />
+        <MetricCard title="Velocity" value={metrics.completedPoints} icon={<TrendingUp className="h-3 w-3"/>} color="purple" tip="مجموع امتیازهای پیچیدگی تکمیل شده." />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -140,10 +99,6 @@ export const AnalyticsView = () => {
           <CardHeader className="border-b bg-slate-50/50 py-3"><CardTitle className="text-sm font-bold">Team Proficiency Radar</CardTitle></CardHeader>
           <CardContent className="pt-6 flex flex-col items-center">
             <RadarChart data={radarData} />
-            <div className="grid grid-cols-2 gap-4 w-full mt-4 border-t pt-4">
-                <div className="text-center"><span className="text-[10px] font-bold text-slate-400 block uppercase">FE Focus</span><span className="text-sm font-black">{metrics.workDistribution.frontend} tasks</span></div>
-                <div className="text-center"><span className="text-[10px] font-bold text-slate-400 block uppercase">BE Focus</span><span className="text-sm font-black">{metrics.workDistribution.backend} tasks</span></div>
-            </div>
           </CardContent>
         </Card>
 
@@ -157,27 +112,20 @@ export const AnalyticsView = () => {
                     {metrics.forecast ? (
                         <div className="flex flex-col md:flex-row items-center gap-8">
                             <div className="flex-1 space-y-4 w-full">
-                                <div className="flex justify-between items-end"><span className="text-xs font-bold text-slate-500">REMAINING WORK</span><span className="text-lg font-black">{metrics.forecast.remainingPoints} Story Points</span></div>
-                                <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden"><div className="h-full bg-primary transition-all duration-1000" style={{ width: `${Math.max(10, 100 - (metrics.forecast.remainingPoints / (metrics.forecast.remainingPoints + metrics.completedPoints || 1) * 100))}%` }} /></div>
-                                <div className="flex items-center gap-2 text-xs text-muted-foreground"><Clock className="h-3 w-3"/> Estimated time to completion: <b className="text-slate-900">{metrics.forecast.estimatedWeeks} weeks</b></div>
-                            </div>
-                            <div className="bg-slate-50 p-4 rounded-xl border w-full md:w-auto text-center space-y-1">
-                                <span className="text-[10px] font-black text-slate-400 uppercase">Health Score</span>
-                                <div className="text-3xl font-black text-primary">{metrics.radarMetrics.predictability}%</div>
+                                <div className="flex justify-between items-end"><span className="text-xs font-bold text-slate-500">REMAINING WORK</span><span className="text-lg font-black">{metrics.forecast.remainingPoints} pts</span></div>
+                                <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden"><div className="h-full bg-primary transition-all duration-1000" style={{ width: `${Math.max(10, 100 - (metrics.forecast.remainingPoints / (metrics.forecast.remainingPoints + (metrics.completedPoints || 1)) * 100))}%` }} /></div>
                             </div>
                         </div>
-                    ) : <div className="py-8 text-center text-muted-foreground italic">No active milestone tracking available.</div>}
+                    ) : <div className="py-8 text-center text-muted-foreground italic">No active milestone tracking.</div>}
                 </CardContent>
             </Card>
 
             <Card className="bg-purple-50/20 border-purple-100">
                 <CardHeader className="py-3 border-b border-purple-100 flex flex-row items-center justify-between">
-                    <CardTitle className="text-sm font-bold flex items-center gap-2 text-purple-700">
-                        <Sparkles className="h-4 w-4" /> Qualitative Analysis (AI)
-                    </CardTitle>
-                    <Button variant="outline" size="sm" onClick={generateAiAudit} disabled={aiLoading} className="h-8 border-purple-200 text-purple-700 hover:bg-purple-100 hover:text-purple-800 transition-colors">
+                    <CardTitle className="text-sm font-bold flex items-center gap-2 text-purple-700"><Sparkles className="h-4 w-4" /> Qualitative Analysis (AI)</CardTitle>
+                    <Button variant="outline" size="sm" onClick={generateAiAudit} disabled={aiLoading} className="h-8 border-purple-200 text-purple-700">
                         {aiLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <BrainCircuit className="h-3.5 w-3.5 mr-1.5" />}
-                        {aiSummary ? "Rescan" : "Deep Scan"}
+                        Scan
                     </Button>
                 </CardHeader>
                 <CardContent className="pt-6">
@@ -185,16 +133,28 @@ export const AnalyticsView = () => {
                         <div className="prose prose-sm max-w-none text-slate-700 italic leading-relaxed" dir="auto">
                             <ReactMarkdown>{aiSummary}</ReactMarkdown>
                         </div>
-                    ) : (
-                        <div className="flex flex-col items-center justify-center py-10 text-center space-y-3 opacity-60">
-                            <BrainCircuit className="h-10 w-10 text-purple-300" />
-                            <p className="text-xs font-medium text-slate-500">دکمه Deep Scan را برای تحلیل کیفی رفتار تیم توسط هوش مصنوعی بزنید.</p>
-                        </div>
-                    )}
+                    ) : <p className="text-xs text-center py-10 opacity-50">دکمه Scan را بزنید.</p>}
                 </CardContent>
             </Card>
         </div>
       </div>
     </div>
+  );
+};
+
+const MetricCard = ({ title, value, icon, color, tip }: { title: string, value: string | number, icon: React.ReactNode, color: string, tip: string }) => {
+  const bgMap: Record<string, string> = { blue: 'bg-blue-50/30 border-blue-100', amber: 'bg-amber-50/30 border-amber-100', rose: 'bg-rose-50/30 border-rose-100', indigo: 'bg-indigo-50/30 border-indigo-100', emerald: 'bg-emerald-50/30 border-emerald-100', purple: 'bg-purple-50/30 border-purple-100' };
+  const textMap: Record<string, string> = { blue: 'text-blue-600', amber: 'text-amber-600', rose: 'text-rose-600', indigo: 'text-indigo-600', emerald: 'text-emerald-600', purple: 'text-purple-600' };
+  const valMap: Record<string, string> = { blue: 'text-blue-900', amber: 'text-amber-900', rose: 'text-rose-900', indigo: 'text-indigo-900', emerald: 'text-emerald-900', purple: 'text-purple-900' };
+  const infoMap: Record<string, string> = { blue: 'text-blue-300', amber: 'text-amber-300', rose: 'text-rose-300', indigo: 'text-indigo-300', emerald: 'text-emerald-300', purple: 'text-purple-300' };
+
+  return (
+    <Card className={`${bgMap[color]} group relative cursor-help transition-all hover:shadow-sm`} title={tip}>
+        <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
+            <CardTitle className={`text-[9px] font-black ${textMap[color]} uppercase tracking-widest flex items-center gap-1.5`}>{icon} {title}</CardTitle>
+            <Info className={`h-3 w-3 ${infoMap[color]} opacity-0 group-hover:opacity-100 transition-opacity`} />
+        </CardHeader>
+        <CardContent><div className={`text-xl font-black ${valMap[color]}`}>{value}</div></CardContent>
+    </Card>
   );
 };
