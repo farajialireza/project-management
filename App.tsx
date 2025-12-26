@@ -4,6 +4,7 @@ import { supabase } from './lib/supabase';
 import { User } from './types';
 import { Auth } from './components/Auth';
 import { Dashboard } from './components/Dashboard';
+import { usersApi } from './api/admin';
 
 interface AuthContextType {
   user: User | null;
@@ -19,16 +20,12 @@ const App = () => {
 
   const fetchProfile = async (uid: string, email: string, displayName?: string) => {
     try {
-      const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', uid)
-        .single();
+      const profile = await usersApi.getProfile(uid);
 
-      if (data && !error) {
-        setUser(data as User);
+      if (profile) {
+        setUser(profile);
       } else {
-        // Fallback if record doesn't exist yet (Trigger delay)
+        // Fallback if record doesn't exist yet (Trigger delay or first sign-in)
         setUser({
           id: uid,
           name: displayName || email.split('@')[0] || 'User',

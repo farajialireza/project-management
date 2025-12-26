@@ -18,6 +18,17 @@ export const usersApi = {
     return data as User[];
   },
 
+  async getProfile(uid: string): Promise<User | null> {
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', uid)
+      .single();
+    
+    if (error || !data) return null;
+    return data as User;
+  },
+
   async updateAdminStatus(userId: string, isAdmin: boolean): Promise<void> {
     const { error } = await supabase
       .from('users')
