@@ -81,7 +81,7 @@ const App = () => {
       <div className="flex h-screen items-center justify-center bg-gray-50">
         <div className="flex flex-col items-center gap-4">
           <div className="h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
-          <p className="text-sm font-medium text-muted-foreground">Product Canvas is loading...</p>
+          <p className="text-sm font-medium text-muted-foreground">axis is loading...</p>
         </div>
       </div>
     );
