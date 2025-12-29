@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../App';
 import { supabase } from '../lib/supabase';
 import { Button } from './ui';
@@ -22,12 +22,16 @@ const TABS = [
 
 export const Dashboard = () => {
   const { user } = useAuth();
-  // If not admin, start on 'stories' since 'backlogs' is now restricted
-  const [activeTab, setActiveTab] = useState(user?.isAdmin ? 'backlogs' : 'stories');
+  // مقداردهی اولیه تب بر اساس نقش کاربر، فقط یکبار در هنگام Mount
+  const [activeTab, setActiveTab] = useState(() => user?.isAdmin ? 'backlogs' : 'stories');
 
   const handleLogout = () => supabase.auth.signOut();
 
-  const ActiveComponent = TABS.find(t => t.id === activeTab)?.component || StoriesView;
+  // پیدا کردن کامپوننت فعال با اطمینان از دسترسی کاربر
+  const currentTab = TABS.find(t => t.id === activeTab);
+  const canAccess = !currentTab?.adminOnly || user?.isAdmin;
+  
+  const ActiveComponent = (canAccess && currentTab?.component) || StoriesView;
 
   return (
     <div className="min-h-screen bg-background">

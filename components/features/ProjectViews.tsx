@@ -402,14 +402,16 @@ const TaskDetailModal = ({ task, isOpen, onClose, onUpdate, onDelete, teams, use
             const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
             const response = await ai.models.generateContent({
                 model: 'gemini-3-flash-preview',
-                contents: `Break this task into 3-6 practical subtasks for a checklist. Farsi. Return JSON array.
+                contents: `Analyze this task and break it down:
                 Title: ${task.title}
-                Desc: ${task.description}`,
+                Description: ${task.description}`,
                 config: {
+                    systemInstruction: "You are an expert project manager. Break down tasks into 3-6 practical subtasks in Persian. Return JSON format.",
                     responseMimeType: "application/json",
                     responseSchema: {
                         type: Type.OBJECT,
-                        properties: { steps: { type: Type.ARRAY, items: { type: Type.STRING } } }
+                        properties: { steps: { type: Type.ARRAY, items: { type: Type.STRING } } },
+                        required: ["steps"]
                     }
                 }
             });
@@ -897,14 +899,28 @@ export const StoriesView = () => {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const response = await ai.models.generateContent({
             model: 'gemini-3-flash-preview',
-            contents: `Generate logical tech tasks in Persian for Story: ${targetStory.title}. JSON output.`,
+            contents: `Story: ${targetStory.title}
+            Description: ${targetStory.description}`,
             config: {
+                systemInstruction: "You are a senior developer. Generate logical technical tasks for the provided user story in Persian. For each task, intelligently determine if it belongs to the 'Frontend' or 'Backend' stack based on logic. Return JSON format.",
                 responseMimeType: "application/json",
                 responseSchema: {
                     type: Type.OBJECT,
                     properties: {
-                        tasks: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, description: { type: Type.STRING }, stack: { type: Type.STRING } } } }
-                    }
+                        tasks: { 
+                          type: Type.ARRAY, 
+                          items: { 
+                            type: Type.OBJECT, 
+                            properties: { 
+                              title: { type: Type.STRING }, 
+                              description: { type: Type.STRING },
+                              stack: { type: Type.STRING, description: "Must be 'Frontend' or 'Backend'." }
+                            },
+                            required: ["title", "description", "stack"]
+                          } 
+                        }
+                    },
+                    required: ["tasks"]
                 }
             }
         });
@@ -913,9 +929,14 @@ export const StoriesView = () => {
         if (generated.tasks) {
             const now = Date.now();
             const newTasksPayload = generated.tasks.map((t: any) => ({
-                title: t.title, description: t.description, status: 'To Do' as const,
-                userStoryId: targetStory.id, backlogId: targetStory.backlogId, panel: targetStory.panel || 'Admin',
-                stack: t.stack, createdAt: now,
+                title: t.title, 
+                description: t.description, 
+                status: 'To Do' as const,
+                userStoryId: targetStory.id, 
+                backlogId: targetStory.backlogId, 
+                panel: targetStory.panel || 'Admin',
+                stack: (t.stack === 'Backend' || t.stack === 'backend') ? 'Backend' : 'Frontend',
+                createdAt: now,
                 history: [{ status: 'To Do', timestamp: now, userId: user?.id || 'ai', userName: user?.name || 'AI Assistant' }],
                 createdBy: { userId: user?.id || 'ai', userName: user?.name || 'AI Assistant' }
             }));
@@ -1155,6 +1176,180 @@ export const StoriesView = () => {
   );
 };
 
+// --- Tasks View ---
+export const TasksView = () => {
+  const { user } = useAuth();
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [isTaskDetailOpen, setIsTaskDetailOpen] = useState(false);
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [usersList, setUsersList] = useState<User[]>([]);
+  const [allStories, setAllStories] = useState<UserStory[]>([]);
+  const { register: regCreate, handleSubmit: subCreate, reset: resetCreate, watch: watchCreate, setValue: setValueCreate } = useForm<Task>();
+
+  const [filterTeam, setFilterTeam] = useState<string>('All');
+  const [filterStack, setFilterStack] = useState<string>('All');
+  const [filterAssignee, setFilterAssignee] = useState<string>('All');
+  const [filterPanel, setFilterPanel] = useState<string>('All');
+  const [filterStory, setFilterStory] = useState<string>('All');
+
+  const STATUSES: Task['status'][] = ['To Do', 'In Progress', 'Testing', 'Review', 'Done'];
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const [ts, tms, usrs, sts] = await Promise.all([
+        tasksApi.getAll(),
+        teamsApi.getAll(),
+        usersApi.getAll(),
+        storiesApi.getAll()
+      ]);
+      setTasks(ts);
+      setTeams(tms);
+      setUsersList(usrs);
+      setAllStories(sts);
+    } catch (e) {
+      console.error("Error fetching tasks view data", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchData(); }, []);
+
+  const handleDragStart = (e: React.DragEvent, taskId: string) => e.dataTransfer.setData('taskId', taskId);
+  const handleDragOver = (e: React.DragEvent) => e.preventDefault();
+
+  const handleDrop = async (e: React.DragEvent, newStatus: Task['status']) => {
+    e.preventDefault();
+    const taskId = e.dataTransfer.getData('taskId');
+    const taskToUpdate = tasks.find(t => t.id === taskId);
+    
+    if (taskToUpdate && taskToUpdate.status !== newStatus && user) {
+        const oldStatus = taskToUpdate.status;
+        setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus } : t));
+        try {
+            const updates: Partial<Task> = { 
+                status: newStatus,
+                history: [...(taskToUpdate.history || []), { status: newStatus, timestamp: Date.now(), userId: user.id, userName: user.name }]
+            };
+            if (newStatus === 'In Progress' && !taskToUpdate.startTime) updates.startTime = Date.now();
+            if (newStatus === 'Done') updates.endTime = Date.now();
+            await tasksApi.updateStatus(taskId, updates);
+        } catch (error: any) {
+            console.error("Drop status update failed:", error);
+            setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: oldStatus } : t));
+            alert("Failed to update status: " + (error.message || "Unknown error"));
+        }
+    }
+  };
+
+  const onManualCreateSubmit = async (data: any) => {
+    const parentStory = allStories.find(s => s.id === data.userStoryId);
+    if (!parentStory) return;
+
+    const now = Date.now();
+    const newTaskData: Partial<Task> = {
+        ...data, status: 'To Do', backlogId: parentStory.backlogId, panel: parentStory.panel || 'Admin',
+        createdAt: now, history: [{ status: 'To Do', timestamp: now, userId: user?.id || 'system', userName: user?.name || 'System' }],
+        createdBy: user ? { userId: user.id, userName: user.name } : { userId: 'system', userName: 'System' }
+    };
+    
+    try {
+        const newTask = await tasksApi.save(newTaskData);
+        setTasks(prev => [...prev, newTask]);
+        setIsCreateDialogOpen(false); resetCreate();
+    } catch (e: any) {
+        console.error("Task creation failed:", e);
+        alert("Failed to create task: " + (e.message || "Unknown error"));
+    }
+  };
+
+  const watchTeam = watchCreate('teamId');
+  const availableMembers = watchTeam ? usersList.filter(u => teams.find(t => t.id === watchTeam)?.memberIds.includes(u.id)) : [];
+
+  const filteredTasks = tasks.filter(task => {
+      const matchTeam = filterTeam === 'All' || task.teamId === filterTeam;
+      const matchStack = filterStack === 'All' || task.stack === filterStack;
+      const matchAssignee = filterAssignee === 'All' || task.assigneeId === filterAssignee;
+      const matchPanel = filterPanel === 'All' || task.panel === filterPanel;
+      const matchStory = filterStory === 'All' || task.userStoryId === filterStory;
+      return matchTeam && matchStack && matchAssignee && matchPanel && matchStory;
+  });
+
+  return (
+    <div className="space-y-4 h-[calc(100vh-180px)] flex flex-col">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 flex-shrink-0">
+        <div className="flex items-center gap-4"><h2 className="text-2xl font-bold tracking-tight">Project Board</h2><Button size="sm" onClick={() => { resetCreate(); setValueCreate('stack', 'Frontend'); setIsCreateDialogOpen(true); }}><Plus className="mr-2 h-4 w-4" /> Create Task</Button></div>
+        <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2 bg-white border rounded-md px-2 py-1 shadow-sm overflow-x-auto max-w-full"><Filter className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                <select className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer" value={filterStory} onChange={(e) => setFilterStory(e.target.value)}><option value="All">All Stories</option>{allStories.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}</select>
+                <div className="w-px h-4 bg-gray-200 mx-1 flex-shrink-0"></div>
+                <select className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer" value={filterTeam} onChange={(e) => setFilterTeam(e.target.value)}><option value="All">All Teams</option>{teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
+                <div className="w-px h-4 bg-gray-200 mx-1 flex-shrink-0"></div>
+                <select className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer" value={filterStack} onChange={(e) => setFilterStack(e.target.value)}><option value="All">All Stacks</option><option value="Frontend">Frontend</option><option value="Backend">Backend</option></select>
+            </div>
+        </div>
+      </div>
+
+      {loading ? (
+          <div className="flex-1 flex items-center justify-center"><Loader2 className="h-10 w-10 animate-spin text-primary" /></div>
+      ) : (
+          <div className="flex-1 flex gap-4 overflow-x-auto pb-4 items-start pt-2">
+            {STATUSES.map(status => (
+                <div key={status} className="flex-shrink-0 w-80 bg-slate-100/50 rounded-xl flex flex-col max-h-full border border-slate-200" onDragOver={handleDragOver} onDrop={(e) => handleDrop(e, status)}>
+                    <div className="p-3 border-b flex items-center justify-between bg-slate-50/50 rounded-t-xl"><span className="font-bold text-sm text-slate-700">{status}</span><Badge variant="secondary" className="text-[10px] bg-white">{filteredTasks.filter(t => t.status === status).length}</Badge></div>
+                    <div className="flex-1 overflow-y-auto p-3 space-y-3">
+                        {filteredTasks.filter(t => t.status === status).map(task => (
+                            <div key={task.id} draggable onDragStart={(e) => handleDragStart(e, task.id)} onClick={() => { setSelectedTask(task); setIsTaskDetailOpen(true); }} className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm hover:shadow-md hover:border-primary transition-all cursor-grab group">
+                                <div className="flex items-start justify-between mb-2"><Badge variant="outline" className="text-[9px]">{task.panel}</Badge><GripVertical className="h-3 w-3 text-slate-300" /></div>
+                                <h3 className="text-sm font-bold text-slate-800 line-clamp-2 mb-2" dir="auto">{task.title}</h3>
+                                <div className="flex items-center justify-between mt-auto">
+                                    <Badge variant="secondary" className="text-[9px] uppercase">{task.stack}</Badge>
+                                    <div className="flex items-center gap-2">
+                                        {task.assigneeId && <div className="w-5 h-5 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[8px] font-bold" title={usersList.find(u => u.id === task.assigneeId)?.name}>{usersList.find(u => u.id === task.assigneeId)?.name?.charAt(0)}</div>}
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            ))}
+          </div>
+      )}
+
+      <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+        <DialogHeader><DialogTitle>Manual Task Creation</DialogTitle></DialogHeader>
+        <form onSubmit={subCreate(onManualCreateSubmit)} className="space-y-4 py-4">
+            <div className="space-y-2"><Label>Target User Story</Label><select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...regCreate('userStoryId', { required: true })}><option value="">-- Select Story --</option>{allStories.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}</select></div>
+            <div className="space-y-2"><Label>Title</Label><Input {...regCreate('title', { required: true })} /></div>
+            <div className="space-y-2"><Label>Description (Markdown)</Label><Textarea {...regCreate('description')} /></div>
+            <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2"><Label>Stack</Label><select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...regCreate('stack')}><option value="Frontend">Frontend</option><option value="Backend">Backend</option></select></div>
+                <div className="space-y-2"><Label>Team</Label><select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...regCreate('teamId')}><option value="">-- None --</option>{teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
+            </div>
+            <DialogFooter><Button type="submit">Save Task</Button></DialogFooter>
+        </form>
+      </Dialog>
+
+      <TaskDetailModal 
+        task={selectedTask} isOpen={isTaskDetailOpen} onClose={() => setIsTaskDetailOpen(false)} 
+        onUpdate={(updated) => {
+            setSelectedTask(updated);
+            setTasks(prev => prev.map(t => t.id === updated.id ? updated : t));
+        }}
+        onDelete={(id) => {
+             setTasks(prev => prev.filter(t => t.id !== id));
+             setIsTaskDetailOpen(false);
+        }}
+        teams={teams} usersList={usersList} allStories={allStories}
+      />
+    </div>
+  );
+};
+
 // --- Milestones View ---
 export const MilestonesView = () => {
   const { user } = useAuth();
@@ -1336,172 +1531,6 @@ export const MilestonesView = () => {
            </div>
            <DialogFooter><Button variant="outline" onClick={() => setIsDetailOpen(false)}>Close</Button></DialogFooter>
         </Dialog>
-      )}
-    </div>
-  );
-};
-
-// --- Tasks View ---
-export const TasksView = () => {
-  const { user } = useAuth();
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
-  const [isTaskDetailOpen, setIsTaskDetailOpen] = useState(false);
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [usersList, setUsersList] = useState<User[]>([]);
-  const [allStories, setAllStories] = useState<UserStory[]>([]);
-  const { register: regCreate, handleSubmit: subCreate, reset: resetCreate, watch: watchCreate, setValue: setValueCreate } = useForm<Task>();
-
-  const [filterTeam, setFilterTeam] = useState<string>('All');
-  const [filterStack, setFilterStack] = useState<string>('All');
-  const [filterAssignee, setFilterAssignee] = useState<string>('All');
-  const [filterPanel, setFilterPanel] = useState<string>('All');
-  const [filterStory, setFilterStory] = useState<string>('All');
-
-  const STATUSES: Task['status'][] = ['To Do', 'In Progress', 'Testing', 'Review', 'Done'];
-
-  const fetchData = async () => {
-    setLoading(true);
-    try {
-      const [ts, tms, usrs, sts] = await Promise.all([
-        tasksApi.getAll(),
-        teamsApi.getAll(),
-        usersApi.getAll(),
-        storiesApi.getAll()
-      ]);
-      setTasks(ts);
-      setTeams(tms);
-      setUsersList(usrs);
-      setAllStories(sts);
-    } catch (e) {
-      console.error("Error fetching tasks view data", e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { fetchData(); }, []);
-
-  const handleDragStart = (e: React.DragEvent, taskId: string) => e.dataTransfer.setData('taskId', taskId);
-  const handleDragOver = (e: React.DragEvent) => e.preventDefault();
-
-  const handleDrop = async (e: React.DragEvent, newStatus: Task['status']) => {
-    e.preventDefault();
-    const taskId = e.dataTransfer.getData('taskId');
-    const taskToUpdate = tasks.find(t => t.id === taskId);
-    
-    if (taskToUpdate && taskToUpdate.status !== newStatus && user) {
-        const oldStatus = taskToUpdate.status;
-        setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus } : t));
-        try {
-            const updates: Partial<Task> = { 
-                status: newStatus,
-                history: [...(taskToUpdate.history || []), { status: newStatus, timestamp: Date.now(), userId: user.id, userName: user.name }]
-            };
-            if (newStatus === 'In Progress' && !taskToUpdate.startTime) updates.startTime = Date.now();
-            if (newStatus === 'Done') updates.endTime = Date.now();
-            await tasksApi.updateStatus(taskId, updates);
-        } catch (error: any) {
-            console.error("Drop status update failed:", error);
-            setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: oldStatus } : t));
-            alert("Failed to update status: " + (error.message || "Unknown error"));
-        }
-    }
-  };
-
-  const onManualCreateSubmit = async (data: any) => {
-    const parentStory = allStories.find(s => s.id === data.userStoryId);
-    if (!parentStory) return;
-
-    const now = Date.now();
-    const newTaskData: Partial<Task> = {
-        ...data, status: 'To Do', backlogId: parentStory.backlogId, panel: parentStory.panel || 'Admin',
-        createdAt: now, history: [{ status: 'To Do', timestamp: now, userId: user?.id || 'system', userName: user?.name || 'System' }],
-        createdBy: user ? { userId: user.id, userName: user.name } : { userId: 'system', userName: 'System' }
-    };
-    
-    try {
-        const newTask = await tasksApi.save(newTaskData);
-        setTasks(prev => [...prev, newTask]);
-        setIsCreateDialogOpen(false); resetCreate();
-    } catch (e: any) {
-        console.error("Task creation failed:", e);
-        alert("Failed to create task: " + (e.message || "Unknown error"));
-    }
-  };
-
-  const watchTeam = watchCreate('teamId');
-  const availableMembers = watchTeam ? usersList.filter(u => teams.find(t => t.id === watchTeam)?.memberIds.includes(u.id)) : [];
-
-  const filteredTasks = tasks.filter(task => {
-      const matchTeam = filterTeam === 'All' || task.teamId === filterTeam;
-      const matchStack = filterStack === 'All' || task.stack === filterStack;
-      const matchAssignee = filterAssignee === 'All' || task.assigneeId === filterAssignee;
-      const matchPanel = filterPanel === 'All' || task.panel === filterPanel;
-      const matchStory = filterStory === 'All' || task.userStoryId === filterStory;
-      return matchTeam && matchStack && matchAssignee && matchPanel && matchStory;
-  });
-
-  return (
-    <div className="space-y-4 h-[calc(100vh-180px)] flex flex-col">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 flex-shrink-0">
-        <div className="flex items-center gap-4"><h2 className="text-2xl font-bold tracking-tight">Project Board</h2><Button size="sm" onClick={() => { resetCreate(); setValueCreate('stack', 'Frontend'); setIsCreateDialogOpen(true); }}><Plus className="mr-2 h-4 w-4" /> Create Task</Button></div>
-        <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2 bg-white border rounded-md px-2 py-1 shadow-sm overflow-x-auto max-w-full"><Filter className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                <select className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer" value={filterStory} onChange={(e) => setFilterStory(e.target.value)}><option value="All">All Stories</option>{allStories.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}</select>
-                <div className="w-px h-4 bg-gray-200 mx-1 flex-shrink-0"></div>
-                <select className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer" value={filterTeam} onChange={(e) => setFilterTeam(e.target.value)}><option value="All">All Teams</option>{teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
-                <div className="w-px h-4 bg-gray-200 mx-1 flex-shrink-0"></div>
-                <select className="text-xs border-none focus:ring-0 bg-transparent text-muted-foreground font-medium outline-none cursor-pointer" value={filterStack} onChange={(e) => setFilterStack(e.target.value)}><option value="All">All Stacks</option><option value="Frontend">Frontend</option><option value="Backend">Backend</option></select>
-            </div>
-        </div>
-      </div>
-
-      {loading ? (
-          <div className="flex-1 flex items-center justify-center"><Loader2 className="h-10 w-10 animate-spin text-primary" /></div>
-      ) : (
-          <div className="flex-1 flex gap-4 overflow-x-auto pb-4 items-start pt-2">
-            {STATUSES.map(status => (
-                <div key={status} className="flex-shrink-0 w-80 bg-slate-100/50 rounded-xl flex flex-col max-h-full border border-slate-200" onDragOver={handleDragOver} onDrop={(e) => handleDrop(e, status)}>
-                    <div className="p-3 border-b flex items-center justify-between bg-slate-50/50 rounded-t-xl"><span className="font-bold text-sm text-slate-700">{status}</span><Badge variant="secondary" className="text-[10px] bg-white">{filteredTasks.filter(t => t.status === status).length}</Badge></div>
-                    <div className="flex-1 overflow-y-auto p-3 space-y-3">
-                        {filteredTasks.filter(t => t.status === status).map(task => (
-                            <div key={task.id} draggable onDragStart={(e) => handleDragStart(e, task.id)} onClick={() => { setSelectedTask(task); setIsTaskDetailOpen(true); }} className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm hover:shadow-md hover:border-primary transition-all cursor-grab group">
-                                <div className="flex items-start justify-between mb-2"><Badge variant="outline" className="text-[9px]">{task.panel}</Badge><GripVertical className="h-3 w-3 text-slate-300" /></div>
-                                <h3 className="text-sm font-bold text-slate-800 leading-tight mb-2 line-clamp-2" dir="auto">{task.title}</h3>
-                                <div className="flex items-center justify-between mt-auto pt-2 border-t border-slate-50">
-                                    <div className="flex items-center gap-1.5 text-slate-600"><div className="h-5 w-5 rounded-full bg-primary/10 flex items-center justify-center"><UserIcon className="h-3 w-3 text-primary" /></div><span className="text-[10px] font-medium">{usersList.find(u => u.id === task.assigneeId)?.name || 'Unassigned'}</span></div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            ))}
-          </div>
-      )}
-
-      <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-        <DialogHeader><DialogTitle>Create New Task</DialogTitle></DialogHeader>
-        <form onSubmit={subCreate(onManualCreateSubmit)} className="space-y-4 py-4">
-            <div className="space-y-2"><Label>Parent Story</Label><select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...regCreate('userStoryId', { required: true })}><option value="">-- Select Story --</option>{allStories.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}</select></div>
-            <div className="space-y-2"><Label>Title</Label><Input {...regCreate('title', { required: true })} /></div>
-            <div className="space-y-2"><Label>Description</Label><Textarea {...regCreate('description')} /></div>
-            <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2"><Label>Stack</Label><select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...regCreate('stack')}><option value="Frontend">Frontend</option><option value="Backend">Backend</option></select></div>
-            </div>
-            <DialogFooter><Button type="submit">Create Task</Button></DialogFooter>
-        </form>
-      </Dialog>
-
-      {selectedTask && (
-          <TaskDetailModal 
-            task={selectedTask} isOpen={isTaskDetailOpen} onClose={() => setIsTaskDetailOpen(false)} 
-            onUpdate={(updated) => { setTasks(prev => prev.map(t => t.id === updated.id ? updated : t)); setSelectedTask(updated); }}
-            onDelete={(id) => { setTasks(prev => prev.filter(t => t.id !== id)); setIsTaskDetailOpen(false); }}
-            teams={teams} usersList={usersList} allStories={allStories}
-          />
       )}
     </div>
   );

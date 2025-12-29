@@ -6,7 +6,7 @@ import { Loader2, FileText, Sparkles, Trash2, AlertCircle, ListTodo } from 'luci
 import { ProductBacklog, UserStory, Task } from '../../types';
 import { backlogsApi, storiesApi, tasksApi } from '../../api/project';
 
-// Types for Generated Content
+// --- Types & Helpers ---
 interface GeneratedStory {
   displayId?: string;
   title: string;
@@ -29,7 +29,6 @@ interface GeneratedData {
   backlogs: GeneratedBacklog[];
 }
 
-// Helper to sanitize data before sending to Supabase
 const sanitizeString = (str: any): string => (str && typeof str === 'string' ? str : "");
 const sanitizePriority = (p: any): 'Low' | 'Medium' | 'High' => {
   const valid = ['Low', 'Medium', 'High'];
@@ -49,21 +48,7 @@ const cleanJson = (text: string) => {
   return text.trim();
 };
 
-export const AiAssistantView = () => {
-  const [mode, setMode] = useState<'bulk' | 'feature' | 'story'>('bulk');
-  return (
-    <div className="space-y-6">
-      <div className="flex space-x-4 border-b pb-4 overflow-x-auto">
-        <Button variant={mode === 'bulk' ? 'default' : 'ghost'} onClick={() => setMode('bulk')}><FileText className="mr-2 h-4 w-4" /> Bulk Import</Button>
-        <Button variant={mode === 'feature' ? 'default' : 'ghost'} onClick={() => setMode('feature')}><Sparkles className="mr-2 h-4 w-4" /> Feature Breakdown</Button>
-        <Button variant={mode === 'story' ? 'default' : 'ghost'} onClick={() => setMode('story')}><ListTodo className="mr-2 h-4 w-4" /> Story Generator</Button>
-      </div>
-      {mode === 'bulk' && <BulkImportSection />}
-      {mode === 'feature' && <FeatureBreakdownSection />}
-      {mode === 'story' && <StoryGeneratorSection />}
-    </div>
-  );
-};
+// --- Sub-sections ---
 
 const BulkImportSection = () => {
   const [text, setText] = useState("");
@@ -89,8 +74,9 @@ const BulkImportSection = () => {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Analyze requirements and provide JSON with backlogs and user stories. Farsi. Doc: ${text.slice(0, 30000)}`,
+        contents: `Input Text: ${text.slice(0, 20000)}`,
         config: {
+          systemInstruction: "You are a requirements engineer. Analyze the input and extract high-level backlogs and nested user stories. Language: Persian. Return strict JSON format.",
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
@@ -100,25 +86,38 @@ const BulkImportSection = () => {
                 items: {
                   type: Type.OBJECT,
                   properties: {
-                    displayId: { type: Type.STRING }, title: { type: Type.STRING }, description: { type: Type.STRING },
-                    role: { type: Type.STRING }, priority: { type: Type.STRING },
+                    displayId: { type: Type.STRING },
+                    title: { type: Type.STRING },
+                    description: { type: Type.STRING },
+                    role: { type: Type.STRING },
+                    priority: { type: Type.STRING },
                     stories: {
                       type: Type.ARRAY,
                       items: {
                         type: Type.OBJECT,
-                        properties: { displayId: { type: Type.STRING }, title: { type: Type.STRING }, description: { type: Type.STRING }, priority: { type: Type.STRING }, points: { type: Type.NUMBER } }
+                        properties: {
+                          displayId: { type: Type.STRING },
+                          title: { type: Type.STRING },
+                          description: { type: Type.STRING },
+                          priority: { type: Type.STRING },
+                          points: { type: Type.NUMBER }
+                        },
+                        required: ["title", "description", "priority", "points"]
                       }
                     }
-                  }
+                  },
+                  required: ["title", "description", "priority", "stories"]
                 }
               }
-            }
+            },
+            required: ["backlogs"]
           }
         }
       });
       if (response.text) setGeneratedData(JSON.parse(cleanJson(response.text)));
-    } catch (error) {
-      alert("AI Analysis failed.");
+    } catch (error: any) {
+      console.error("AI Analysis failed:", error);
+      alert("AI Analysis failed: " + (error.message || "Unknown error"));
     } finally {
       setLoading(false);
     }
@@ -204,12 +203,28 @@ const FeatureBreakdownSection = () => {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Break workflow into Backlogs. Farsi. Workflow: ${featureDescription}`,
+        contents: `Workflow: ${featureDescription}`,
         config: {
+          systemInstruction: `Break the feature into Backlogs for the ${selectedPanel} panel. Language: Persian. Return JSON format.`,
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
-            properties: { backlogs: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { displayId: { type: Type.STRING }, title: { type: Type.STRING }, description: { type: Type.STRING }, priority: { type: Type.STRING } } } } }
+            properties: { 
+                backlogs: { 
+                    type: Type.ARRAY, 
+                    items: { 
+                        type: Type.OBJECT, 
+                        properties: { 
+                            displayId: { type: Type.STRING }, 
+                            title: { type: Type.STRING }, 
+                            description: { type: Type.STRING }, 
+                            priority: { type: Type.STRING } 
+                        },
+                        required: ["title", "description", "priority"]
+                    } 
+                } 
+            },
+            required: ["backlogs"]
           }
         }
       });
@@ -274,12 +289,29 @@ const StoryGeneratorSection = () => {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Generate User Stories for Backlog: ${bl?.title}. Workflow: ${workflowDescription}. Farsi. JSON.`,
+        contents: `Backlog: ${bl?.title}. Workflow: ${workflowDescription}.`,
         config: {
+          systemInstruction: `Generate User Stories for the specified backlog in the ${bl?.panel || 'Admin'} panel. Logic must fit this panel's user role. Language: Persian. Return JSON format.`,
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
-            properties: { stories: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, description: { type: Type.STRING }, priority: { type: Type.STRING }, points: { type: Type.NUMBER }, displayId: { type: Type.STRING } } } } }
+            properties: { 
+                stories: { 
+                    type: Type.ARRAY, 
+                    items: { 
+                        type: Type.OBJECT, 
+                        properties: { 
+                            title: { type: Type.STRING }, 
+                            description: { type: Type.STRING }, 
+                            priority: { type: Type.STRING }, 
+                            points: { type: Type.NUMBER }, 
+                            displayId: { type: Type.STRING } 
+                        },
+                        required: ["title", "description", "priority", "points"]
+                    } 
+                } 
+            },
+            required: ["stories"]
           }
         }
       });
@@ -297,9 +329,12 @@ const StoryGeneratorSection = () => {
     try {
       for (const st of generatedStories) {
         await storiesApi.save({
-          backlogId: selectedBacklogId, title: sanitizeString(st.title),
-          description: sanitizeString(st.description), priority: sanitizePriority(st.priority),
-          points: sanitizeNumber(st.points), displayId: sanitizeString(st.displayId),
+          backlogId: selectedBacklogId, 
+          title: sanitizeString(st.title),
+          description: sanitizeString(st.description), 
+          priority: sanitizePriority(st.priority),
+          points: sanitizeNumber(st.points), 
+          displayId: sanitizeString(st.displayId),
           panel: parent?.panel || 'Admin'
         });
       }
@@ -310,7 +345,7 @@ const StoryGeneratorSection = () => {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
       <Card><CardHeader><CardTitle>Story Generator</CardTitle></CardHeader><CardContent className="space-y-4">
-        <div className="space-y-2"><Label>Select Parent Backlog</Label><select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={selectedBacklogId} onChange={(e) => setSelectedBacklogId(e.target.value)}><option value="">-- Select --</option>{backlogs.map(b => <option key={b.id} value={b.id}>{b.title}</option>)}</select></div>
+        <div className="space-y-2"><Label>Select Parent Backlog</Label><select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={selectedBacklogId} onChange={(e) => setSelectedBacklogId(e.target.value)}><option value="">-- Select --</option>{backlogs.map(b => <option key={b.id} value={b.id}>{b.title} ({b.panel || 'Admin'})</option>)}</select></div>
         <Textarea className="min-h-[200px] text-right" dir="rtl" placeholder="Describe workflow..." value={workflowDescription} onChange={(e) => setWorkflowDescription(e.target.value)} />
         <Button onClick={handleGenerate} disabled={loading || !workflowDescription || !selectedBacklogId} className="w-full">{loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Generate Stories"}</Button>
       </CardContent></Card>
@@ -321,6 +356,24 @@ const StoryGeneratorSection = () => {
             <div className="space-y-4"><div className="max-h-[400px] overflow-y-auto space-y-2 pr-2">{generatedStories.map((s, i) => (<div key={i} className="border rounded p-3 bg-white text-right" dir="rtl"><div className="flex justify-between items-start mb-1"><b>{s.title}</b><Badge>{s.points} pts</Badge></div><p className="text-xs text-muted-foreground">{s.description}</p></div>))}</div><Button onClick={handleSave} disabled={saving} className="w-full">Save to Supabase</Button></div>
         )}
       </CardContent></Card>
+    </div>
+  );
+};
+
+// --- Main View ---
+
+export const AiAssistantView = () => {
+  const [mode, setMode] = useState<'bulk' | 'feature' | 'story'>('bulk');
+  return (
+    <div className="space-y-6">
+      <div className="flex space-x-4 border-b pb-4 overflow-x-auto">
+        <Button variant={mode === 'bulk' ? 'default' : 'ghost'} onClick={() => setMode('bulk')}><FileText className="mr-2 h-4 w-4" /> Bulk Import</Button>
+        <Button variant={mode === 'feature' ? 'default' : 'ghost'} onClick={() => setMode('feature')}><Sparkles className="mr-2 h-4 w-4" /> Feature Breakdown</Button>
+        <Button variant={mode === 'story' ? 'default' : 'ghost'} onClick={() => setMode('story')}><ListTodo className="mr-2 h-4 w-4" /> Story Generator</Button>
+      </div>
+      {mode === 'bulk' && <BulkImportSection />}
+      {mode === 'feature' && <FeatureBreakdownSection />}
+      {mode === 'story' && <StoryGeneratorSection />}
     </div>
   );
 };

@@ -68,10 +68,16 @@ export const AnalyticsView = () => {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Analyze these SEI metrics: ${JSON.stringify(metrics)}. Provide a professional engineering audit in Persian.`,
+        contents: `Engineering Metrics Data: ${JSON.stringify(metrics)}`,
+        config: {
+            systemInstruction: "You are a senior engineering director. Analyze the provided SEI/DORA metrics and provide a professional, insightful engineering audit. Identify bottlenecks and suggest improvements. Language: Persian. Use Markdown formatting.",
+        }
       });
       setAiSummary(response.text || "");
-    } catch (e) { alert("AI Audit failed."); } finally { setAiLoading(false); }
+    } catch (e: any) { 
+        console.error("AI Audit failed:", e);
+        alert("AI Audit failed: " + (e.message || "Unknown error")); 
+    } finally { setAiLoading(false); }
   };
 
   if (loading) return <div className="flex h-64 items-center justify-center"><Activity className="h-8 w-8 animate-spin text-primary" /></div>;

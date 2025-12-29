@@ -17,14 +17,15 @@ export const useAuth = () => useContext(AuthContext);
 const App = () => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isInitialAuthChecked, setIsInitialAuthChecked] = useState(false);
 
   const fetchProfile = async (uid: string, email: string, displayName?: string) => {
     try {
       const profile = await usersApi.getProfile(uid);
-
       if (profile) {
         setUser(profile);
       } else {
+        // Fallback user if profile not yet created
         setUser({
           id: uid,
           name: displayName || email.split('@')[0] || 'User',
@@ -52,6 +53,7 @@ const App = () => {
         console.error("Supabase Auth Initialization failed:", err);
       } finally {
         setLoading(false);
+        setIsInitialAuthChecked(true);
       }
     };
 
@@ -59,31 +61,27 @@ const App = () => {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session) {
-        setLoading(true);
-        try {
-          await fetchProfile(
-            session.user.id, 
-            session.user.email!, 
-            session.user.user_metadata?.full_name
-          );
-        } finally {
-          setLoading(false);
-        }
+        // Background sync for session changes, don't trigger global loading
+        fetchProfile(
+          session.user.id, 
+          session.user.email!, 
+          session.user.user_metadata?.full_name
+        );
       } else if (event === 'SIGNED_OUT') {
         setUser(null);
-        setLoading(false);
       }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  if (loading) {
+  // Full page loader only during real initial load
+  if (loading && !isInitialAuthChecked) {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50">
         <div className="flex flex-col items-center gap-4">
           <div className="h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
-          <p className="text-sm font-medium text-muted-foreground">Loading Product Canvas...</p>
+          <p className="text-sm font-medium text-muted-foreground">Product Canvas is loading...</p>
         </div>
       </div>
     );
