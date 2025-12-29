@@ -31,7 +31,6 @@ interface GeneratedData {
 
 const sanitizeString = (str: any): string => (str && typeof str === 'string' ? str : "");
 const sanitizePriority = (p: any): 'Low' | 'Medium' | 'High' => {
-  const valid = ['Low', 'Medium', 'High'];
   if (typeof p === 'string') {
      const up = p.toUpperCase();
      if (up.includes('P1') || up.includes('HIGH') || up.includes('بالا')) return 'High';
@@ -76,7 +75,13 @@ const BulkImportSection = () => {
         model: 'gemini-3-flash-preview',
         contents: `Input Text: ${text.slice(0, 20000)}`,
         config: {
-          systemInstruction: "You are a requirements engineer. Analyze the input and extract high-level backlogs and nested user stories. Language: Persian. Return strict JSON format.",
+          systemInstruction: `You are a literal data extractor. Your ONLY job is to map the provided text into a Backlog and User Story structure. 
+          STRICT RULES:
+          1. Do NOT invent new features. 
+          2. Do NOT add technical requirements that are not mentioned.
+          3. Only extract what is explicitly written. 
+          4. If the text is a simple list, map each item to a Backlog or Story exactly as written.
+          5. Language: Persian. Return strict JSON format.`,
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
@@ -144,7 +149,7 @@ const BulkImportSection = () => {
           }
         }
       }
-      alert("Successfully imported to Supabase.");
+      alert("Successfully imported.");
       setGeneratedData(null); setText("");
     } catch (e) {
       alert("Import failed.");
@@ -161,7 +166,7 @@ const BulkImportSection = () => {
           <div className="space-y-2"><Label>Target Panel</Label><select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={selectedPanel} onChange={(e) => setSelectedPanel(e.target.value as any)}><option value="Admin">Admin</option><option value="Customer">Customer</option></select></div>
           <div className="space-y-2"><Label>Upload File</Label><Input type="file" onChange={handleFileChange} /></div>
           <div className="space-y-2"><Label>Paste Content</Label><Textarea className="min-h-[300px]" value={text} onChange={(e) => setText(e.target.value)} /></div>
-          <Button onClick={handleAnalyze} disabled={loading || !text} className="w-full">{loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Analyze with AI"}</Button>
+          <Button onClick={handleAnalyze} disabled={loading || !text} className="w-full">{loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Analyze & Map with AI"}</Button>
         </CardContent>
       </Card>
       <Card className="h-fit">
@@ -175,12 +180,11 @@ const BulkImportSection = () => {
                 {generatedData.backlogs.map((bl, i) => (
                   <div key={i} className="border rounded-lg p-4 space-y-2 bg-secondary/20">
                     <h3 className="font-bold text-lg">{bl.title}</h3>
-                    <p className="text-sm text-muted-foreground">{bl.description}</p>
-                    <Badge variant="outline">{bl.stories?.length || 0} stories detected</Badge>
+                    <Badge variant="outline">{bl.stories?.length || 0} items extracted</Badge>
                   </div>
                 ))}
               </div>
-              <Button onClick={handleImport} disabled={importing} className="w-full" variant="default">{importing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Confirm & Import to Supabase"}</Button>
+              <Button onClick={handleImport} disabled={importing} className="w-full" variant="default">{importing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Confirm & Import"}</Button>
             </div>
           )}
         </CardContent>
@@ -203,9 +207,11 @@ const FeatureBreakdownSection = () => {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Workflow: ${featureDescription}`,
+        contents: `Input Description: ${featureDescription}`,
         config: {
-          systemInstruction: `Break the feature into Backlogs for the ${selectedPanel} panel. Language: Persian. Return JSON format.`,
+          systemInstruction: `Convert the following description into high-level Backlogs for the ${selectedPanel} panel. 
+          STRICT: Do NOT add any extra features. Do NOT split one idea into multiple unnecessary backlogs. Be concise and use the user's terminology.
+          Language: Persian. Return JSON format.`,
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
@@ -246,7 +252,7 @@ const FeatureBreakdownSection = () => {
           panel: selectedPanel
         });
       }
-      setGeneratedBacklogs([]); setFeatureDescription(""); alert("Features created.");
+      setGeneratedBacklogs([]); setFeatureDescription(""); alert("Backlogs created.");
     } catch (e) { alert("Save failed."); } finally { setSaving(false); }
   };
 
@@ -254,14 +260,14 @@ const FeatureBreakdownSection = () => {
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
       <Card><CardHeader><CardTitle>Feature Description</CardTitle></CardHeader><CardContent className="space-y-4">
         <div className="space-y-2"><Label>Target Panel</Label><select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={selectedPanel} onChange={(e) => setSelectedPanel(e.target.value as any)}><option value="Admin">Admin</option><option value="Customer">Customer</option></select></div>
-        <Textarea className="min-h-[200px] text-right" dir="rtl" placeholder="Describe requirements..." value={featureDescription} onChange={(e) => setFeatureDescription(e.target.value)} />
-        <Button onClick={handleGenerate} disabled={loading || !featureDescription} className="w-full">{loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Generate Backlogs"}</Button>
+        <Textarea className="min-h-[200px] text-right" dir="rtl" placeholder="Describe your feature literal flow..." value={featureDescription} onChange={(e) => setFeatureDescription(e.target.value)} />
+        <Button onClick={handleGenerate} disabled={loading || !featureDescription} className="w-full">{loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Extract Backlogs"}</Button>
       </CardContent></Card>
-      <Card><CardHeader><CardTitle>Suggested Backlogs</CardTitle></CardHeader><CardContent>
+      <Card><CardHeader><CardTitle>Extracted Backlogs</CardTitle></CardHeader><CardContent>
         {generatedBacklogs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-[200px] text-muted-foreground border-2 border-dashed rounded-lg"><Sparkles className="h-10 w-10 mb-2 opacity-50" /><p>Results will appear here</p></div>
+            <div className="flex flex-col items-center justify-center h-[200px] text-muted-foreground border-2 border-dashed rounded-lg"><Sparkles className="h-10 w-10 mb-2 opacity-50" /><p>Literal results will appear here</p></div>
         ) : (
-            <div className="space-y-4"><div className="max-h-[400px] overflow-y-auto space-y-2 pr-2">{generatedBacklogs.map((bl, i) => (<div key={i} className="border rounded p-3 bg-white text-right" dir="rtl"><span className="font-semibold text-sm">{bl.title}</span><p className="text-xs text-muted-foreground mt-1">{bl.description}</p></div>))}</div><Button onClick={handleSave} disabled={saving} className="w-full">Create Features</Button></div>
+            <div className="space-y-4"><div className="max-h-[400px] overflow-y-auto space-y-2 pr-2">{generatedBacklogs.map((bl, i) => (<div key={i} className="border rounded p-3 bg-white text-right" dir="rtl"><span className="font-semibold text-sm">{bl.title}</span></div>))}</div><Button onClick={handleSave} disabled={saving} className="w-full">Create Backlogs</Button></div>
         )}
       </CardContent></Card>
     </div>
@@ -289,9 +295,11 @@ const StoryGeneratorSection = () => {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Backlog: ${bl?.title}. Workflow: ${workflowDescription}.`,
+        contents: `Backlog: ${bl?.title}. Workflow Input: ${workflowDescription}.`,
         config: {
-          systemInstruction: `Generate User Stories for the specified backlog in the ${bl?.panel || 'Admin'} panel. Logic must fit this panel's user role. Language: Persian. Return JSON format.`,
+          systemInstruction: `Convert the provided workflow into literal User Stories for the ${bl?.panel || 'Admin'} panel. 
+          STRICT: Only create stories for what is explicitly described in the workflow. Do NOT add "best practices" or "extra features" or "security layers" unless mentioned.
+          Language: Persian. Return JSON format.`,
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
@@ -346,14 +354,14 @@ const StoryGeneratorSection = () => {
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
       <Card><CardHeader><CardTitle>Story Generator</CardTitle></CardHeader><CardContent className="space-y-4">
         <div className="space-y-2"><Label>Select Parent Backlog</Label><select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={selectedBacklogId} onChange={(e) => setSelectedBacklogId(e.target.value)}><option value="">-- Select --</option>{backlogs.map(b => <option key={b.id} value={b.id}>{b.title} ({b.panel || 'Admin'})</option>)}</select></div>
-        <Textarea className="min-h-[200px] text-right" dir="rtl" placeholder="Describe workflow..." value={workflowDescription} onChange={(e) => setWorkflowDescription(e.target.value)} />
-        <Button onClick={handleGenerate} disabled={loading || !workflowDescription || !selectedBacklogId} className="w-full">{loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Generate Stories"}</Button>
+        <Textarea className="min-h-[200px] text-right" dir="rtl" placeholder="Describe workflow literally..." value={workflowDescription} onChange={(e) => setWorkflowDescription(e.target.value)} />
+        <Button onClick={handleGenerate} disabled={loading || !workflowDescription || !selectedBacklogId} className="w-full">{loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Extract Stories"}</Button>
       </CardContent></Card>
-      <Card><CardHeader><CardTitle>Generated Stories</CardTitle></CardHeader><CardContent>
+      <Card><CardHeader><CardTitle>Extracted Stories</CardTitle></CardHeader><CardContent>
         {generatedStories.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-[200px] text-muted-foreground border-2 border-dashed rounded-lg"><ListTodo className="h-10 w-10 mb-2 opacity-50" /><p>Stories will appear here</p></div>
+            <div className="flex flex-col items-center justify-center h-[200px] text-muted-foreground border-2 border-dashed rounded-lg"><ListTodo className="h-10 w-10 mb-2 opacity-50" /><p>Literal stories will appear here</p></div>
         ) : (
-            <div className="space-y-4"><div className="max-h-[400px] overflow-y-auto space-y-2 pr-2">{generatedStories.map((s, i) => (<div key={i} className="border rounded p-3 bg-white text-right" dir="rtl"><div className="flex justify-between items-start mb-1"><b>{s.title}</b><Badge>{s.points} pts</Badge></div><p className="text-xs text-muted-foreground">{s.description}</p></div>))}</div><Button onClick={handleSave} disabled={saving} className="w-full">Save to Supabase</Button></div>
+            <div className="space-y-4"><div className="max-h-[400px] overflow-y-auto space-y-2 pr-2">{generatedStories.map((s, i) => (<div key={i} className="border rounded p-3 bg-white text-right" dir="rtl"><div className="flex justify-between items-start mb-1"><b>{s.title}</b><Badge>{s.points} pts</Badge></div></div>))}</div><Button onClick={handleSave} disabled={saving} className="w-full">Save Stories</Button></div>
         )}
       </CardContent></Card>
     </div>

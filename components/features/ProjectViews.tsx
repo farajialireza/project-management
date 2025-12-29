@@ -741,6 +741,7 @@ export const StoriesView = () => {
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   
   const [aiLoading, setAiLoading] = useState(false);
+  const [aiTaskInstructions, setAiTaskInstructions] = useState("");
   
   const { register: regStory, handleSubmit: subStory, reset: resetStory, setValue: setValueStory } = useForm<UserStory>();
   const { register: regTask, handleSubmit: subTask, reset: resetTask, watch: watchTask, setValue: setValueTask } = useForm<Task>();
@@ -839,6 +840,7 @@ export const StoriesView = () => {
     e.stopPropagation();
     setTargetStory(story);
     resetTask();
+    setAiTaskInstructions("");
     setValueTask('stack', 'Frontend');
     setIsAddTaskDialogOpen(true);
   };
@@ -900,7 +902,8 @@ export const StoriesView = () => {
         const response = await ai.models.generateContent({
             model: 'gemini-3-flash-preview',
             contents: `Story: ${targetStory.title}
-            Description: ${targetStory.description}`,
+            Description: ${targetStory.description}
+            ${aiTaskInstructions ? `Specific Guidance/Instructions: ${aiTaskInstructions}` : ''}`,
             config: {
                 systemInstruction: "You are a senior developer. Generate logical technical tasks for the provided user story in Persian. For each task, intelligently determine if it belongs to the 'Frontend' or 'Backend' stack based on logic. Return JSON format.",
                 responseMimeType: "application/json",
@@ -1129,10 +1132,19 @@ export const StoriesView = () => {
       <Dialog open={isAddTaskDialogOpen} onOpenChange={setIsAddTaskDialogOpen}>
         <DialogHeader><DialogTitle>Add Task to: {targetStory?.title}</DialogTitle></DialogHeader>
         <div className="py-2">
-            <Button variant="outline" className="w-full mb-4" onClick={generateAiTasks} disabled={aiLoading}>
-                {aiLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Sparkles className="mr-2 h-4 w-4 text-purple-600"/>}
-                Auto-Generate Tasks with AI
-            </Button>
+            <div className="space-y-2 mb-4 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <Label className="text-xs font-bold uppercase text-slate-500">AI Design Description</Label>
+                <Textarea 
+                    placeholder="E.g. Focus on specific logic, database structure, or UI details..." 
+                    value={aiTaskInstructions} 
+                    onChange={e => setAiTaskInstructions(e.target.value)}
+                    className="min-h-[60px] text-xs bg-white"
+                />
+                <Button variant="outline" className="w-full mt-2" onClick={generateAiTasks} disabled={aiLoading}>
+                    {aiLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Sparkles className="mr-2 h-4 w-4 text-purple-600"/>}
+                    Auto-Generate with AI
+                </Button>
+            </div>
             <form onSubmit={subTask(onAddTaskSubmit)} className="space-y-4">
                 <div className="space-y-2"><Label>Title</Label><Input {...regTask('title', { required: true })} /></div>
                 <div className="space-y-2"><Label>Description (Markdown)</Label><Textarea {...regTask('description')} placeholder="Supports Markdown..." /></div>
