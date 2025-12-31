@@ -19,13 +19,19 @@ export const usersApi = {
   },
 
   async getProfile(uid: string): Promise<User | null> {
+    // Explicitly check for valid uid to avoid unnecessary query attempts
+    if (!uid) return null;
+    
     const { data, error } = await supabase
       .from('users')
       .select('*')
       .eq('id', uid)
-      .maybeSingle(); // Changed from single() to maybeSingle() to avoid throwing on 0 rows
+      .maybeSingle(); 
     
-    if (error) throw error;
+    if (error) {
+      console.warn("Supabase profile query details:", error);
+      throw error;
+    }
     return data as User | null;
   },
 

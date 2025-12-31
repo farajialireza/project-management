@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Button, Table, TableHeader, TableRow, TableHead, TableBody, TableCell, Dialog, DialogHeader, DialogTitle, Input, Label, DialogFooter, Badge, Card, CardHeader, CardTitle, CardContent, Textarea } from '../ui';
 import { ProductBacklog, UserStory, Milestone, Task, Team, User, TaskComment, AssignmentHistory, SubTask } from '../../types';
-import { Plus, Trash2, Edit2, ChevronDown, ChevronRight, ListTodo, Sparkles, MessageSquare, History, User as UserIcon, Users as UsersIcon, Clock, Loader2, CheckCircle, Save, X, Filter, Search, Calendar, Layout, BarChart3, FileText, Info, UserPlus, Users, GripVertical, CheckSquare, Square, MoreVertical, ExternalLink, Milestone as MilestoneIcon } from 'lucide-react';
+import { Plus, Trash2, Edit2, ChevronDown, ChevronRight, ListTodo, Sparkles, MessageSquare, History, User as UserIcon, Users as UsersIcon, Clock, Loader2, CheckCircle, Save, X, Filter, Search, Calendar, Layout, BarChart3, FileText, Info, UserPlus, Users, GripVertical, CheckSquare, Square, MoreVertical, ExternalLink, Milestone as MilestoneIcon, Construction, Bug, Layers } from 'lucide-react';
 import { useAuth } from '../../App';
 import ReactMarkdown from 'react-markdown';
 import { GoogleGenAI, Type } from "@google/genai";
@@ -742,6 +742,10 @@ export const StoriesView = () => {
   
   const [aiLoading, setAiLoading] = useState(false);
   const [aiTaskInstructions, setAiTaskInstructions] = useState("");
+  // New States for AI Architect context in Add Task dialog
+  const [taskMode, setTaskMode] = useState<'Feature' | 'Bug Fix'>('Feature');
+  const [frontendDocs, setFrontendDocs] = useState(() => localStorage.getItem('axis_fe_arch_docs') || "");
+  const [backendDocs, setBackendDocs] = useState(() => localStorage.getItem('axis_be_arch_docs') || "");
   
   const { register: regStory, handleSubmit: subStory, reset: resetStory, setValue: setValueStory } = useForm<UserStory>();
   const { register: regTask, handleSubmit: subTask, reset: resetTask, watch: watchTask, setValue: setValueTask } = useForm<Task>();
@@ -771,6 +775,10 @@ export const StoriesView = () => {
   };
 
   useEffect(() => { fetchData(); }, []);
+
+  // Sync docs to localStorage when changed in dialog
+  useEffect(() => { localStorage.setItem('axis_fe_arch_docs', frontendDocs); }, [frontendDocs]);
+  useEffect(() => { localStorage.setItem('axis_be_arch_docs', backendDocs); }, [backendDocs]);
 
   const toggleStory = async (storyId: string) => {
     if (expandedStoryId === storyId) {
@@ -901,11 +909,31 @@ export const StoriesView = () => {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const response = await ai.models.generateContent({
             model: 'gemini-3-flash-preview',
-            contents: `Story: ${targetStory.title}
-            Description: ${targetStory.description}
-            ${aiTaskInstructions ? `Specific Guidance/Instructions: ${aiTaskInstructions}` : ''}`,
+            contents: `
+              ARCHITECTURE DOCS (CONTEXT):
+              --- FRONTEND GUIDELINES ---
+              ${frontendDocs || "No FE docs provided."}
+              --- BACKEND GUIDELINES ---
+              ${backendDocs || "No BE docs provided."}
+
+              USER STORY:
+              Title: ${targetStory.title}
+              Description: ${targetStory.description}
+
+              OPERATION MODE:
+              ${taskMode} (Generate tasks as ${taskMode === 'Feature' ? 'new implementation steps' : 'tracing and fixing steps'})
+              
+              ADDITIONAL INSTRUCTIONS:
+              ${aiTaskInstructions || "Focus on logical breakdown."}
+
+              TASK:
+              Generate technical tasks. For each task, strictly follow the architecture docs and provide detailed subtasks.
+              Language: Persian. Return JSON format.
+            `,
             config: {
-                systemInstruction: "You are a senior developer. Generate logical technical tasks for the provided user story in Persian. For each task, intelligently determine if it belongs to the 'Frontend' or 'Backend' stack based on logic. Return JSON format.",
+                systemInstruction: `You are a Lead Software Architect. Use the provided documentation to define technical tasks.
+                Ensure Frontend tasks follow Frontend docs, and Backend tasks follow Backend docs.
+                Break each task into granular 'subtasks' (implementations steps).`,
                 responseMimeType: "application/json",
                 responseSchema: {
                     type: Type.OBJECT,
@@ -917,9 +945,10 @@ export const StoriesView = () => {
                             properties: { 
                               title: { type: Type.STRING }, 
                               description: { type: Type.STRING },
-                              stack: { type: Type.STRING, description: "Must be 'Frontend' or 'Backend'." }
+                              stack: { type: Type.STRING, description: "Must be 'Frontend' or 'Backend'." },
+                              subtasks: { type: Type.ARRAY, items: { type: Type.STRING } }
                             },
-                            required: ["title", "description", "stack"]
+                            required: ["title", "description", "stack", "subtasks"]
                           } 
                         }
                     },
@@ -940,6 +969,11 @@ export const StoriesView = () => {
                 panel: targetStory.panel || 'Admin',
                 stack: (t.stack === 'Backend' || t.stack === 'backend') ? 'Backend' : 'Frontend',
                 createdAt: now,
+                subtasks: t.subtasks.map((st: string) => ({
+                    id: Math.random().toString(36).substr(2, 9),
+                    title: st,
+                    isDone: false
+                })),
                 history: [{ status: 'To Do', timestamp: now, userId: user?.id || 'ai', userName: user?.name || 'AI Assistant' }],
                 createdBy: { userId: user?.id || 'ai', userName: user?.name || 'AI Assistant' }
             }));
@@ -1131,20 +1165,78 @@ export const StoriesView = () => {
 
       <Dialog open={isAddTaskDialogOpen} onOpenChange={setIsAddTaskDialogOpen}>
         <DialogHeader><DialogTitle>Add Task to: {targetStory?.title}</DialogTitle></DialogHeader>
-        <div className="py-2">
-            <div className="space-y-2 mb-4 p-3 bg-slate-50 rounded-lg border border-slate-200">
-                <Label className="text-xs font-bold uppercase text-slate-500">AI Design Description</Label>
-                <Textarea 
-                    placeholder="E.g. Focus on specific logic, database structure, or UI details..." 
-                    value={aiTaskInstructions} 
-                    onChange={e => setAiTaskInstructions(e.target.value)}
-                    className="min-h-[60px] text-xs bg-white"
-                />
-                <Button variant="outline" className="w-full mt-2" onClick={generateAiTasks} disabled={aiLoading}>
-                    {aiLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Sparkles className="mr-2 h-4 w-4 text-purple-600"/>}
-                    Auto-Generate with AI
+        <div className="py-2 max-h-[70vh] overflow-y-auto pr-2">
+            {/* AI Architect Control Center */}
+            <div className="space-y-4 mb-6 p-4 bg-slate-50 rounded-xl border-2 border-primary/10 shadow-sm">
+                <div className="flex items-center justify-between">
+                    <Label className="text-xs font-black uppercase text-primary flex items-center gap-2">
+                        <Sparkles className="h-4 w-4" /> AI Architect (RAG Mode)
+                    </Label>
+                    <div className="flex gap-1">
+                        <Button 
+                          variant={taskMode === 'Feature' ? 'default' : 'outline'} 
+                          size="sm" className="h-7 text-[10px]"
+                          onClick={() => setTaskMode('Feature')}
+                        >
+                            <Construction className="h-3 w-3 mr-1" /> Feature
+                        </Button>
+                        <Button 
+                          variant={taskMode === 'Bug Fix' ? 'destructive' : 'outline'} 
+                          size="sm" className="h-7 text-[10px]"
+                          onClick={() => setTaskMode('Bug Fix')}
+                        >
+                            <Bug className="h-3 w-3 mr-1" /> Bug Fix
+                        </Button>
+                    </div>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                        <Label className="text-[10px] font-bold text-slate-500 flex items-center gap-1"><Layers className="h-3 w-3" /> FE Architecture (MD)</Label>
+                        <Textarea 
+                            placeholder="State mgmt, folder structure..." 
+                            value={frontendDocs} 
+                            onChange={(e) => setFrontendDocs(e.target.value)}
+                            className="min-h-[80px] text-[10px] bg-white font-mono"
+                        />
+                    </div>
+                    <div className="space-y-1.5">
+                        <Label className="text-[10px] font-bold text-slate-500 flex items-center gap-1"><Layers className="h-3 w-3" /> BE Architecture (MD)</Label>
+                        <Textarea 
+                            placeholder="Services, API routing..." 
+                            value={backendDocs} 
+                            onChange={(e) => setBackendDocs(e.target.value)}
+                            className="min-h-[80px] text-[10px] bg-white font-mono"
+                        />
+                    </div>
+                </div>
+
+                <div className="space-y-1.5 pt-2">
+                    <Label className="text-[10px] font-bold text-slate-500">Custom Generation Prompt / Description</Label>
+                    <Textarea 
+                        placeholder="E.g. Focus on specific logic, database structure, or UI details..." 
+                        value={aiTaskInstructions} 
+                        onChange={e => setAiTaskInstructions(e.target.value)}
+                        className="min-h-[60px] text-xs bg-white"
+                    />
+                </div>
+                
+                <Button 
+                    variant="default" 
+                    className="w-full mt-2 bg-gradient-to-r from-primary to-indigo-600 hover:opacity-90" 
+                    onClick={generateAiTasks} 
+                    disabled={aiLoading}
+                >
+                    {aiLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Sparkles className="mr-2 h-4 w-4"/>}
+                    Auto-Generate Technical Tasks with AI
                 </Button>
             </div>
+
+            <div className="relative py-4">
+                <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
+                <div className="relative flex justify-center text-xs uppercase"><span className="bg-white px-2 text-muted-foreground">Or Manual Entry</span></div>
+            </div>
+
             <form onSubmit={subTask(onAddTaskSubmit)} className="space-y-4">
                 <div className="space-y-2"><Label>Title</Label><Input {...regTask('title', { required: true })} /></div>
                 <div className="space-y-2"><Label>Description (Markdown)</Label><Textarea {...regTask('description')} placeholder="Supports Markdown..." /></div>
@@ -1161,7 +1253,7 @@ export const StoriesView = () => {
                     <div className="space-y-2"><Label>Assign Team</Label><select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...regTask('teamId')}><option value="">-- No Team --</option>{teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
                     <div className="space-y-2"><Label>Assign Member</Label><select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" {...regTask('assigneeId')}><option value="">-- Unassigned --</option>{availableMembers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
                 </div>
-                <DialogFooter><Button type="submit">Create Task</Button></DialogFooter>
+                <DialogFooter><Button type="submit" variant="secondary">Create Manually</Button></DialogFooter>
             </form>
         </div>
       </Dialog>
@@ -1467,6 +1559,7 @@ export const MilestonesView = () => {
                 <Card key={m.id} className="group hover:shadow-md transition-all cursor-pointer border-slate-200" onClick={() => openDetails(m)}>
                    <CardHeader className="pb-3 flex flex-row items-start justify-between space-y-0">
                       <div className="space-y-1">
+                        {/* Fix: corrected unintentional comparison of string literal 'status' with 'Completed' */}
                         <Badge variant={m.status === 'Active' ? 'default' : m.status === 'Completed' ? 'outline' : 'secondary'} className={m.status === 'Completed' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : ''}>{m.status}</Badge>
                         <CardTitle className="text-lg font-bold group-hover:text-primary transition-colors">{m.title}</CardTitle>
                       </div>

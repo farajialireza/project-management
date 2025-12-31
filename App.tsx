@@ -25,7 +25,7 @@ const App = () => {
       if (profile) {
         setUser(profile);
       } else {
-        // Fallback user if profile not yet created
+        // Fallback user if profile not yet created in the database
         setUser({
           id: uid,
           name: displayName || email.split('@')[0] || 'User',
@@ -33,8 +33,17 @@ const App = () => {
           isAdmin: email === 'realovatsug@gmail.com'
         });
       }
-    } catch (error) {
-      console.error("Error fetching user profile:", error);
+    } catch (error: any) {
+      // Improved logging to avoid [object Object] output
+      console.error("Error fetching user profile:", error.message || error);
+      
+      // Fallback on error to ensure the user can at least enter the app
+      setUser({
+        id: uid,
+        name: displayName || email.split('@')[0] || 'User',
+        email: email,
+        isAdmin: email === 'realovatsug@gmail.com'
+      });
     }
   };
 
@@ -49,8 +58,8 @@ const App = () => {
             session.user.user_metadata?.full_name
           );
         }
-      } catch (err) {
-        console.error("Supabase Auth Initialization failed:", err);
+      } catch (err: any) {
+        console.error("Supabase Auth Initialization failed:", err.message || err);
       } finally {
         setLoading(false);
         setIsInitialAuthChecked(true);
