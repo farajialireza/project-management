@@ -1,3 +1,4 @@
+
 import { defineConfig, loadEnv } from 'vite';
 import process from 'node:process';
 
@@ -19,6 +20,11 @@ export default defineConfig(({ mode }) => {
       allowedHosts: allowedHosts,
       // سایر تنظیمات سرور در صورت نیاز
       host: true, // اجازه دسترسی از طریق IP شبکه
+      port: 5173,
+    },
+    preview: {
+      // تنظیم پورت برای حالت پیش‌نمایش (بعد از بیلد)
+      host: true,
       port: 5173,
     },
     // در صورتی که از پلاگین‌های دیگر مثل React استفاده می‌کنید اینجا اضافه شود
